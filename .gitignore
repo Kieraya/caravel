@@ -14,13 +14,13 @@ tmp
 caravel_config.py
 local_config.py
 env
-dist
+
 caravel.egg-info/
 app.db
 *.bak
 
 # Node.js, webpack artifacts
-*.entry.js
+
 *.js.map
 node_modules
 npm-debug.log
