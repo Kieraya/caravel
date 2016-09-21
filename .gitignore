@@ -23,6 +23,5 @@ app.db
 
 *.js.map
 caravel/assets/node_modules/*
-caravel/assets/node_modules/font-awesome/*
-!caravel/assets/node_modules/font-awesome/css
+!caravel/assets/node_modules/font-awesome/
 npm-debug.log
