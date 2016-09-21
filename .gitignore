@@ -22,5 +22,7 @@ app.db
 # Node.js, webpack artifacts
 
 *.js.map
-node_modules
+caravel/assets/node_modules/*
+caravel/assets/node_modules/font-awesome/*
+!caravel/assets/node_modules/font-awesome/css
 npm-debug.log
