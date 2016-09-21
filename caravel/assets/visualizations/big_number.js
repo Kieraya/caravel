@@ -86,6 +86,19 @@ function bigNumberVis(slice) {
       .style('font-size', d3.min([height, width]) / 3.5)
       .attr('fill', 'white');
 
+      //Printing big number subheader text
+      if (json.subheader !== null) {
+        g.append('text')
+        .attr('x', width / 2)
+        .attr('y', y + d3.min([height, width]) / 4.5)
+        .text(json.subheader)
+        .attr('id', 'subheader_text')
+        .style('font-size', d3.min([height, width]) / 16)
+        .style('text-anchor', 'middle')
+        .attr('fill', c)
+        .attr('stroke', c);
+      }
+      
       if (fd.viz_type === 'big_number') {
         //Drawing trend line
 
@@ -105,19 +118,6 @@ function bigNumberVis(slice) {
 
         if (v_compare !== null) {
           y = (height / 8) * 3;
-        }
-
-        //Printing big number subheader text
-        if (json.subheader !== null) {
-          g.append('text')
-          .attr('x', width / 2)
-          .attr('y', y + d3.min([height, width]) / 4.5)
-          .text(json.subheader)
-          .attr('id', 'subheader_text')
-          .style('font-size', d3.min([height, width]) / 16)
-          .style('text-anchor', 'middle')
-          .attr('fill', c)
-          .attr('stroke', c);
         }
 
         var c = scale_color(v_compare);
