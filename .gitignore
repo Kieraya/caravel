@@ -18,11 +18,10 @@ env
 caravel.egg-info/
 app.db
 *.bak
-.idea
-*.sqllite
 
 # Node.js, webpack artifacts
 
 *.js.map
-node_modules
+caravel/assets/node_modules/*
+!caravel/assets/node_modules/font-awesome/
 npm-debug.log
