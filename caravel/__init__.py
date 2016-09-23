@@ -14,6 +14,7 @@ from sqlalchemy import event, exc
 from flask_appbuilder.baseviews import expose
 from flask_cache import Cache
 from flask_migrate import Migrate
+from caravel.source_registry import SourceRegistry
 from werkzeug.contrib.fixers import ProxyFix
 
 
@@ -96,4 +97,10 @@ appbuilder = AppBuilder(
 sm = appbuilder.sm
 
 get_session = appbuilder.get_session
-from caravel import config, views  # noqa
+
+# Registering sources
+module_datasource_map = app.config.get("DEFAULT_MODULE_DS_MAP")
+module_datasource_map.update(app.config.get("ADDITIONAL_MODULE_DS_MAP"))
+SourceRegistry.register_sources(module_datasource_map)
+
+from caravel import views, config  # noqa

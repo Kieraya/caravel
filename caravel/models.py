@@ -50,6 +50,7 @@ from werkzeug.datastructures import ImmutableMultiDict
 
 import caravel
 from caravel import app, db, get_session, utils, sm
+from caravel.source_registry import SourceRegistry
 from caravel.viz import viz_types
 from caravel.utils import flasher, MetricPermException, DimSelector
 
@@ -156,8 +157,7 @@ class Slice(Model, AuditMixinNullable):
     __tablename__ = 'slices'
     id = Column(Integer, primary_key=True)
     slice_name = Column(String(250))
-    druid_datasource_id = Column(Integer, ForeignKey('datasources.id'))
-    table_id = Column(Integer, ForeignKey('tables.id'))
+    datasource_id = Column(Integer)
     datasource_type = Column(String(200))
     datasource_name = Column(String(2000))
     viz_type = Column(String(250))
@@ -165,33 +165,34 @@ class Slice(Model, AuditMixinNullable):
     description = Column(Text)
     cache_timeout = Column(Integer)
     perm = Column(String(2000))
-
-    table = relationship(
-        'SqlaTable', foreign_keys=[table_id], backref='slices')
-    druid_datasource = relationship(
-        'DruidDatasource', foreign_keys=[druid_datasource_id], backref='slices')
     owners = relationship("User", secondary=slice_user)
 
     def __repr__(self):
         return self.slice_name
 
     @property
+    def cls_model(self):
+        return SourceRegistry.sources[self.datasource_type]
+
+    @property
     def datasource(self):
-        return self.table or self.druid_datasource
+        return self.get_datasource
+
+    @datasource.getter
+    @utils.memoized
+    def get_datasource(self):
+        ds = db.session.query(
+            self.cls_model).filter_by(
+            id=self.datasource_id).first()
+        return ds
 
     @renders('datasource_name')
     def datasource_link(self):
-        if self.table:
-            return self.table.link
-        elif self.druid_datasource:
-            return self.druid_datasource.link
+        return self.datasource.link
 
     @property
     def datasource_edit_url(self):
-        if self.table:
-            return self.table.url
-        elif self.druid_datasource:
-            return self.druid_datasource.url
+        self.datasource.url
 
     @property
     @utils.memoized
@@ -203,10 +204,6 @@ class Slice(Model, AuditMixinNullable):
     @property
     def description_markeddown(self):
         return utils.markdown(self.description)
-
-    @property
-    def datasource_id(self):
-        return self.table_id or self.druid_datasource_id
 
     @property
     def data(self):
@@ -283,12 +280,8 @@ class Slice(Model, AuditMixinNullable):
 
 
 def set_perm(mapper, connection, target):  # noqa
-    if target.table_id:
-        src_class = SqlaTable
-        id_ = target.table_id
-    elif target.druid_datasource_id:
-        src_class = DruidDatasource
-        id_ = target.druid_datasource_id
+    src_class = target.cls_model
+    id_ = target.datasource_id
     ds = db.session.query(src_class).filter_by(id=int(id_)).first()
     target.perm = ds.perm
 
@@ -641,6 +634,9 @@ class Database(Model, AuditMixinNullable):
     def get_columns(self, table_name, schema=None):
         return self.inspector.get_columns(table_name, schema)
 
+    def get_indexes(self, table_name, schema=None):
+        return self.inspector.get_indexes(table_name, schema)
+
     @property
     def sqlalchemy_uri_decrypted(self):
         conn = sqla.engine.url.make_url(self.sqlalchemy_uri)
@@ -706,6 +702,10 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
         return (
             "[{obj.database}].[{obj.table_name}]"
             "(id:{obj.id})").format(obj=self)
+
+    @property
+    def name(self):
+        return self.table_name
 
     @property
     def full_name(self):
@@ -1207,6 +1207,7 @@ class DruidCluster(Model, AuditMixinNullable):
         for datasource in self.get_datasources():
             if datasource not in config.get('DRUID_DATA_SOURCE_BLACKLIST'):
                 DruidDatasource.sync_to_db(datasource, self)
+
     @property
     def perm(self):
         return "[{obj.cluster_name}].(id:{obj.id})".format(obj=self)
@@ -2005,6 +2006,7 @@ class Query(Model):
             'tempTable': self.tmp_table_name,
             'userId': self.user_id,
         }
+
     @property
     def name(self):
         ts = datetime.now().isoformat()
@@ -2012,3 +2014,71 @@ class Query(Model):
         tab = self.tab_name.replace(' ', '_').lower() if self.tab_name else 'notab'
         tab = re.sub(r'\W+', '', tab)
         return "sqllab_{tab}_{ts}".format(**locals())
+
+
+class DatasourceAccessRequest(Model, AuditMixinNullable):
+    """ORM model for the access requests for datasources and dbs."""
+    __tablename__ = 'access_request'
+    id = Column(Integer, primary_key=True)
+
+    datasource_id = Column(Integer)
+    datasource_type = Column(String(200))
+
+    ROLES_BLACKLIST = set(['Admin', 'Alpha', 'Gamma', 'Public'])
+
+    @property
+    def cls_model(self):
+        return SourceRegistry.sources[self.datasource_type]
+
+    @property
+    def username(self):
+        return self.creator()
+
+    @property
+    def datasource(self):
+        return self.get_datasource
+
+    @datasource.getter
+    @utils.memoized
+    def get_datasource(self):
+        ds = db.session.query(self.cls_model).filter_by(
+            id=self.datasource_id).first()
+        return ds
+
+    @property
+    def datasource_link(self):
+        return self.datasource.link
+
+    @property
+    def roles_with_datasource(self):
+        action_list = ''
+        pv = sm.find_permission_view_menu(
+            'datasource_access', self.datasource.perm)
+        for r in pv.role:
+            if r.name in self.ROLES_BLACKLIST:
+                continue
+            url = (
+                '/caravel/approve?datasource_type={self.datasource_type}&'
+                'datasource_id={self.datasource_id}&'
+                'created_by={self.created_by.username}&role_to_grant={r.name}'
+                .format(**locals())
+            )
+            href = '<a href="{}">Grant {} Role</a>'.format(url, r.name)
+            action_list = action_list + '<li>' + href + '</li>'
+        return '<ul>' + action_list + '</ul>'
+
+    @property
+    def user_roles(self):
+        action_list = ''
+        for r in self.created_by.roles:
+            url = (
+                '/caravel/approve?datasource_type={self.datasource_type}&'
+                'datasource_id={self.datasource_id}&'
+                'created_by={self.created_by.username}&role_to_extend={r.name}'
+                .format(**locals())
+            )
+            href = '<a href="{}">Extend {} Role</a>'.format(url, r.name)
+            if r.name in self.ROLES_BLACKLIST:
+                href = "{} Role".format(r.name)
+            action_list = action_list + '<li>' + href + '</li>'
+        return '<ul>' + action_list + '</ul>'

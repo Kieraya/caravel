@@ -33,8 +33,11 @@ from wtforms.validators import ValidationError
 
 import caravel
 from caravel import (
-    appbuilder, cache, db, models, viz, utils, app, sm, ascii_art, sql_lab
+    appbuilder, cache, db, models, viz, utils, app,
+    sm, ascii_art, sql_lab
 )
+from caravel.source_registry import SourceRegistry
+from caravel.models import DatasourceAccessRequest as DAR
 
 config = app.config
 log_this = models.Log.log_this
@@ -73,6 +76,9 @@ class ListWidgetWithCheckboxes(ListWidget):
 ALL_DATASOURCE_ACCESS_ERR = __(
     "This endpoint requires the `all_datasource_access` permission")
 DATASOURCE_MISSING_ERR = __("The datasource seems to have been deleted")
+ACCESS_REQUEST_MISSING_ERR = __(
+    "The access requests seem to have been deleted")
+USER_MISSING_ERR = __("The user seems to have been deleted")
 
 
 def get_database_access_error_msg(database_name):
@@ -80,13 +86,9 @@ def get_database_access_error_msg(database_name):
               "`all_datasource_access` permission", name=database_name)
 
 
-def get_datasource_access_error_msg(datasource):
-    error = ("This endpoint requires the datasource %(name)s, database or "
-             "`all_datasource_access` permission")
-    if hasattr(datasource, 'table_name'):
-        return __(error, name=datasource.table_name)
-    else:
-        return __(error, name=datasource.datasource_name)
+def get_datasource_access_error_msg(datasource_name):
+    return __("This endpoint requires the datasource %(name)s, database or "
+              "`all_datasource_access` permission", name=datasource_name)
 
 
 def get_error_msg():
@@ -520,6 +522,7 @@ class DatabaseView(CaravelModelView, DeleteMixin):  # noqa
     }
 
     def pre_add(self, db):
+        db.set_sqlalchemy_uri(db.sqlalchemy_uri)
         utils.merge_perm(sm, 'database_access', db.perm)
 
     def pre_update(self, db):
@@ -627,6 +630,31 @@ appbuilder.add_view(
     icon='fa-table',)
 
 
+class AccessRequestsModelView(CaravelModelView, DeleteMixin):
+    datamodel = SQLAInterface(DAR)
+    list_columns = [
+        'username', 'user_roles', 'datasource_link',
+        'roles_with_datasource', 'created_on']
+    order_columns = ['username', 'datasource_link']
+    base_order = ('changed_on', 'desc')
+    label_columns = {
+        'username': _("User"),
+        'user_roles': _("User Roles"),
+        'database': _("Database URL"),
+        'datasource_link': _("Datasource"),
+        'roles_with_datasource': _("Roles to grant"),
+        'created_on': _("Created On"),
+    }
+
+appbuilder.add_view(
+    AccessRequestsModelView,
+    "Access requests",
+    label=__("Access requests"),
+    category="Security",
+    category_label=__("Security"),
+    icon='fa-table',)
+
+
 appbuilder.add_separator("Sources")
 
 
@@ -675,8 +703,7 @@ class SliceModelView(CaravelModelView, DeleteMixin):  # noqa
     list_columns = [
         'slice_link', 'viz_type', 'datasource_link', 'creator', 'modified']
     edit_columns = [
-        'slice_name', 'description', 'viz_type', 'druid_datasource',
-        'table', 'owners', 'dashboards', 'params', 'cache_timeout']
+        'slice_name', 'description', 'viz_type', 'owners', 'dashboards', 'params', 'cache_timeout']
     base_order = ('changed_on', 'desc')
     description_columns = {
         'description': Markup(
@@ -722,18 +749,13 @@ class SliceModelView(CaravelModelView, DeleteMixin):  # noqa
         if not widget:
             return redirect(self.get_redirect())
 
-        a_druid_datasource = db.session.query(models.DruidDatasource).first()
-        if a_druid_datasource is not None:
-            url = "/druiddatasourcemodelview/list/"
-            msg = _(
-                "Click on a datasource link to create a Slice, "
-                "or click on a table link "
-                "<a href='/tablemodelview/list/'>here</a> "
-                "to create a Slice for a table"
-            )
-        else:
-            url = "/tablemodelview/list/"
-            msg = _("Click on a table link to create a Slice")
+        sources = SourceRegistry.sources
+        for source in sources:
+            ds = db.session.query(SourceRegistry.sources[source]).first()
+            if ds is not None:
+                url = "/{}/list/".format(ds.baselink)
+                msg = _("Click on a {} link to create a Slice".format(source))
+                break
 
         redirect_url = "/r/msg/?url={}&msg={}".format(url, msg)
         return redirect(redirect_url)
@@ -827,6 +849,10 @@ class DashboardModelView(CaravelModelView, DeleteMixin):  # noqa
         if obj.slug:
             obj.slug = obj.slug.replace(" ", "-")
             obj.slug = re.sub(r'\W+', '', obj.slug)
+        if g.user not in obj.owners:
+            obj.owners.append(g.user)
+        utils.validate_json(obj.json_metadata)
+        utils.validate_json(obj.position_json)
 
     def pre_update(self, obj):
         check_ownership(obj)
@@ -971,6 +997,122 @@ appbuilder.add_view_no_menu(R)
 
 class Caravel(BaseCaravelView):
     """The base views for Caravel!"""
+    @log_this
+    @has_access
+    @expose("/request_access_form/<datasource_type>/<datasource_id>/"
+            "<datasource_name>")
+    def request_access_form(
+            self, datasource_type, datasource_id, datasource_name):
+        request_access_url = (
+            '/caravel/request_access?datasource_type={}&datasource_id={}&'
+            'datasource_name=datasource_name'.format(
+                datasource_type, datasource_id, datasource_name)
+        )
+        return self.render_template(
+            'caravel/request_access.html',
+            request_access_url=request_access_url,
+            datasource_name=datasource_name,
+            slicemodelview_link='/slicemodelview/list/')
+
+    @log_this
+    @has_access
+    @expose("/request_access")
+    def request_access(self):
+        datasource_id = request.args.get('datasource_id')
+        datasource_type = request.args.get('datasource_type')
+        datasource_name = request.args.get('datasource_name')
+        session = db.session
+
+        duplicates = (
+            session.query(DAR)
+            .filter(
+                DAR.datasource_id == datasource_id,
+                DAR.datasource_type == datasource_type,
+                DAR.created_by_fk == g.user.id)
+            .all()
+        )
+
+        if duplicates:
+            flash(__(
+                "You have already requested access to the datasource %(name)s",
+                name=datasource_name), "warning")
+            return redirect('/slicemodelview/list/')
+
+        access_request = DAR(datasource_id=datasource_id,
+                             datasource_type=datasource_type)
+        db.session.add(access_request)
+        db.session.commit()
+        flash(__("Access to the datasource %(name)s was requested",
+                 name=datasource_name), "info")
+        return redirect('/slicemodelview/list/')
+
+    @log_this
+    @has_access
+    @expose("/approve")
+    def approve(self):
+        datasource_type = request.args.get('datasource_type')
+        datasource_id = request.args.get('datasource_id')
+        created_by_username = request.args.get('created_by')
+        role_to_grant = request.args.get('role_to_grant')
+        role_to_extend = request.args.get('role_to_extend')
+
+        session = db.session
+        datasource_class = SourceRegistry.sources[datasource_type]
+        datasource = session.query(datasource_class).filter_by(
+            id=datasource_id).first()
+
+        if not datasource:
+            flash(DATASOURCE_MISSING_ERR, "alert")
+            return json_error_response(DATASOURCE_MISSING_ERR)
+
+        requested_by = sm.find_user(username=created_by_username)
+        if not requested_by:
+            flash(USER_MISSING_ERR, "alert")
+            return json_error_response(USER_MISSING_ERR)
+
+        requests = (
+            session.query(DAR)
+            .filter(
+                DAR.datasource_id == datasource_id,
+                DAR.datasource_type == datasource_type,
+                DAR.created_by_fk == requested_by.id)
+            .all()
+        )
+
+        if not requests:
+            flash(ACCESS_REQUEST_MISSING_ERR, "alert")
+            return json_error_response(ACCESS_REQUEST_MISSING_ERR)
+
+        # check if you can approve
+        if self.all_datasource_access() or g.user.id == datasource.owner_id:
+            # can by done by admin only
+            if role_to_grant:
+                role = sm.find_role(role_to_grant)
+                requested_by.roles.append(role)
+                flash(__(
+                    "%(user)s was granted the role %(role)s that gives access "
+                    "to the %(datasource)s",
+                    user=requested_by.username,
+                    role=role_to_grant,
+                    datasource=datasource.full_name), "info")
+
+            if role_to_extend:
+                perm_view = sm.find_permission_view_menu(
+                    'datasource_access', datasource.perm)
+                sm.add_permission_role(sm.find_role(role_to_extend), perm_view)
+                flash(__("Role %(r)s was extended to provide the access to"
+                         " the datasource %(ds)s",
+                         r=role_to_extend, ds=datasource.full_name), "info")
+
+        else:
+            flash(__("You have no permission to approve this request"),
+                  "danger")
+            return redirect('/accessrequestsmodelview/list/')
+        for r in requests:
+            session.delete(r)
+        session.commit()
+        return redirect('/accessrequestsmodelview/list/')
+
     @has_access
     @expose("/explore/<datasource_type>/<datasource_id>/<slice_id>/")
     @expose("/explore/<datasource_type>/<datasource_id>/")
@@ -978,13 +1120,8 @@ class Caravel(BaseCaravelView):
     @log_this
     def explore(self, datasource_type, datasource_id, slice_id=None):
         error_redirect = '/slicemodelview/list/'
-        datasource_class = models.SqlaTable \
-            if datasource_type == "table" else models.DruidDatasource
-        datasources = (
-            db.session
-            .query(datasource_class)
-            .all()
-        )
+        datasource_class = SourceRegistry.sources[datasource_type]
+        datasources = db.session.query(datasource_class).all()
         datasources = sorted(datasources, key=lambda ds: ds.full_name)
         datasource = [ds for ds in datasources if int(datasource_id) == ds.id]
         datasource = datasource[0] if datasource else None
@@ -994,8 +1131,10 @@ class Caravel(BaseCaravelView):
             return redirect(error_redirect)
 
         if not self.datasource_access(datasource):
-            flash(__(get_datasource_access_error_msg(datasource)), "danger")
-            return redirect(error_redirect)
+            flash(
+                __(get_datasource_access_error_msg(datasource.name)), "danger")
+            return redirect('caravel/request_access_form/{}/{}/{}'.format(
+                datasource_type, datasource_id, datasource.name))
 
         request_args_multi_dict = request.args  # MultiDict
 
@@ -1093,12 +1232,8 @@ class Caravel(BaseCaravelView):
             if k not in as_list and isinstance(v, list):
                 d[k] = v[0]
 
-        table_id = druid_datasource_id = None
         datasource_type = args.get('datasource_type')
-        if datasource_type in ('datasource', 'druid'):
-            druid_datasource_id = args.get('datasource_id')
-        elif datasource_type == 'table':
-            table_id = args.get('datasource_id')
+        datasource_id = args.get('datasource_id')
 
         if action in ('saveas'):
             d.pop('slice_id')  # don't save old slice_id
@@ -1107,9 +1242,8 @@ class Caravel(BaseCaravelView):
         slc.params = json.dumps(d, indent=4, sort_keys=True)
         slc.datasource_name = args.get('datasource_name')
         slc.viz_type = args.get('viz_type')
-        slc.druid_datasource_id = druid_datasource_id
-        slc.table_id = table_id
         slc.datasource_type = datasource_type
+        slc.datasource_id = datasource_id
         slc.slice_name = slice_name
 
         if action in ('saveas') and slice_add_perm:
@@ -1238,6 +1372,8 @@ class Caravel(BaseCaravelView):
         md = dash.metadata_dejson
         if 'filter_immune_slices' not in md:
             md['filter_immune_slices'] = []
+        if 'filter_immune_slice_fields' not in md:
+            md['filter_immune_slice_fields'] = {}
         md['expanded_slices'] = data['expanded_slices']
         dash.json_metadata = json.dumps(md, indent=4)
         dash.css = data['css']
@@ -1280,7 +1416,7 @@ class Caravel(BaseCaravelView):
                     .filter_by(database_name=db_name)
                     .first()
                 )
-                if uri == database.safe_sqlalchemy_uri():
+                if database and uri == database.safe_sqlalchemy_uri():
                     # the password-masked uri was passed
                     # use the URI associated with this database
                     uri = database.sqlalchemy_uri_decrypted
@@ -1292,9 +1428,10 @@ class Caravel(BaseCaravelView):
             engine = create_engine(uri, connect_args=connect_args)
             engine.connect()
             return json.dumps(engine.table_names(), indent=4)
-        except Exception:
-            return Response(
-                traceback.format_exc(),
+        except Exception as e:
+            return Response((
+                "Connection failed!\n\n"
+                "The error message returned was:\n{}").format(e),
                 status=500,
                 mimetype="application/json")
 
@@ -1330,7 +1467,9 @@ class Caravel(BaseCaravelView):
                 json_error_response(__(
                     "Table %(t)s wasn't found in the database %(d)s",
                     t=table_name, s=db_name), status=404)
-            slices = table.slices
+            slices = session.query(models.Slice).filter_by(
+                datasource_id=table.id,
+                datasource_type=table.type).all()
 
         for slice in slices:
             try:
@@ -1535,9 +1674,11 @@ class Caravel(BaseCaravelView):
         schema = None if schema in ('null', 'undefined') else schema
         mydb = db.session.query(models.Database).filter_by(id=database_id).one()
         cols = []
+        indexes = []
         t = mydb.get_columns(table_name, schema)
         try:
             t = mydb.get_columns(table_name, schema)
+            indexes = mydb.get_indexes(table_name, schema)
         except Exception as e:
             return Response(
                 json.dumps({'error': utils.error_msg_from_exception(e)}),
@@ -1556,6 +1697,7 @@ class Caravel(BaseCaravelView):
         tbl = {
             'name': table_name,
             'columns': cols,
+            'indexes': indexes,
         }
         return Response(json.dumps(tbl), mimetype="application/json")
 
@@ -1569,7 +1711,7 @@ class Caravel(BaseCaravelView):
 
         # Prevent exposing column fields to users that cannot access DB.
         if not self.datasource_access(t.perm):
-            flash(get_datasource_access_error_msg(t), 'danger')
+            flash(get_datasource_access_error_msg(t.name), 'danger')
             return redirect("/tablemodelview/list/")
 
         fields = ", ".join(
@@ -1799,6 +1941,14 @@ appbuilder.add_link(
     'SQL Lab <span class="label label-danger">alpha</span>',
     href='/caravel/sqllab',
     icon="fa-flask")
+
+
+@app.after_request
+def apply_caching(response):
+    """Applies the configuration's http headers to all responses"""
+    for k, v in config.get('HTTP_HEADERS').items():
+        response.headers[k] = v
+    return response
 
 
 # ---------------------------------------------------------------------
