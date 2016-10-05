@@ -107,6 +107,7 @@ def get_or_create_main_db(caravel):
     logging.info(config.get("SQLALCHEMY_DATABASE_URI"))
     dbobj.set_sqlalchemy_uri(config.get("SQLALCHEMY_DATABASE_URI"))
     dbobj.expose_in_sqllab = True
+    dbobj.allow_run_sync = True
     db.session.add(dbobj)
     db.session.commit()
     return dbobj
@@ -217,7 +218,7 @@ def init(caravel):
         'RoleModelView',
         'Security',
         'UserDBModelView',
-        'SQL Lab <span class="label label-danger">alpha</span>',
+        'SQL Lab',
         'AccessRequestsModelView',
     ])
 
@@ -443,6 +444,16 @@ def validate_json(obj):
             json.loads(obj)
         except Exception:
             raise CaravelException("JSON is not valid")
+
+
+def table_has_constraint(table, name, db):
+    """Utility to find a constraint name in alembic migrations"""
+    t = sa.Table(table, db.metadata, autoload=True, autoload_with=db.engine)
+
+    for c in t.constraints:
+        if c.name == name:
+            return True
+    return False
 
 
 class timeout(object):

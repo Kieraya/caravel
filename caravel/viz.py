@@ -116,6 +116,8 @@ class BaseViz(object):
             del d['json']
         if 'action' in d:
             del d['action']
+        if 'slice_id' in d:
+            del d['slice_id']
         d.update(kwargs)
         # Remove unchecked checkboxes because HTML is weird like that
         od = MultiDict()
@@ -716,7 +718,7 @@ class BoxPlotViz(NVD3Viz):
     viz_type = "box_plot"
     verbose_name = _("Box Plot")
     sort_series = False
-    is_timeseries = False
+    is_timeseries = True
     fieldsets = ({
         'label': None,
         'fields': (
@@ -1657,8 +1659,8 @@ class FilterBoxViz(BaseViz):
 
     def query_obj(self):
         qry = super(FilterBoxViz, self).query_obj()
-        groupby = self.form_data['groupby']
-        if len(groupby) < 1:
+        groupby = self.form_data.get('groupby')
+        if len(groupby) < 1 and not self.form_data.get('date_filter'):
             raise Exception("Pick at least one filter field")
         qry['metrics'] = [
             self.form_data['metric']]
@@ -1666,7 +1668,7 @@ class FilterBoxViz(BaseViz):
 
     def get_data(self):
         qry = self.query_obj()
-        filters = [g for g in qry['groupby']]
+        filters = [g for g in self.form_data['groupby']]
         d = {}
         for flt in filters:
             qry['groupby'] = [flt]

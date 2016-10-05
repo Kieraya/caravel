@@ -48,6 +48,9 @@ SQLALCHEMY_DATABASE_URI = os.environ['SQL_ALCHEMY_DATABASE_URL']
 # SQLALCHEMY_DATABASE_URI = 'mysql://myapp@localhost/myapp'
 # SQLALCHEMY_DATABASE_URI = 'postgresql://root:password@localhost/myapp'
 
+# The limit of queries fetched for query search
+QUERY_SEARCH_LIMIT = 1000
+
 # Flask-WTF flag for CSRF
 CSRF_ENABLED = True
 

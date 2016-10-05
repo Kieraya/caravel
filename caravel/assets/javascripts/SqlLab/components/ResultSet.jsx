@@ -13,12 +13,6 @@ class ResultSet extends React.Component {
       showModal: false,
     };
   }
-  shouldComponentUpdate(nextProps, nextState) {
-    return (
-      this.state.searchText !== nextState.searchText ||
-      this.state.showModal !== nextState.showModal
-    );
-  }
   changeSearch(event) {
     this.setState({ searchText: event.target.value });
   }
@@ -72,7 +66,7 @@ class ResultSet extends React.Component {
           <div className="ResultSet">
             <Table
               data={results.data}
-              columns={results.columns}
+              columns={results.columns.map((col) => col.name)}
               sortable
               className="table table-condensed table-bordered"
               filterBy={this.state.searchText}

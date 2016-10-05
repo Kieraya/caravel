@@ -3,7 +3,6 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 from __future__ import unicode_literals
-import re
 
 import functools
 import json
@@ -188,7 +187,9 @@ class Slice(Model, AuditMixinNullable):
 
     @renders('datasource_name')
     def datasource_link(self):
-        return self.datasource.link
+        datasource = self.datasource
+        if datasource:
+            return self.datasource.link
 
     @property
     def datasource_edit_url(self):
@@ -271,6 +272,10 @@ class Slice(Model, AuditMixinNullable):
         slice_params['viz_type'] = self.viz_type if self.viz_type else "table"
         if url_params_multidict:
             slice_params.update(url_params_multidict)
+            to_del = [k for k in slice_params if k not in url_params_multidict]
+            for k in to_del:
+                del slice_params[k]
+
         immutable_slice_params = ImmutableMultiDict(slice_params)
         return viz_types[immutable_slice_params.get('viz_type')](
             self.datasource,
@@ -330,6 +335,10 @@ class Dashboard(Model, AuditMixinNullable):
     @property
     def url(self):
         return "/caravel/dashboard/{}/".format(self.slug or self.id)
+
+    @property
+    def datasources(self):
+        return {slc.datasource for slc in self.slices}
 
     @property
     def metadata_dejson(self):
@@ -740,10 +749,6 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
                 "table-condensed"))
 
     @property
-    def name(self):
-        return self.table_name
-
-    @property
     def metrics_combo(self):
         return sorted(
             [
@@ -820,7 +825,7 @@ class SqlaTable(Model, Queryable, AuditMixinNullable):
             # Patch only if the column clause is specific for DateTime set and
             # granularity is selected.
             @compiles(ColumnClause)
-            def _(element, compiler, **kw):
+            def visit_column(element, compiler, **kw):
                 text = compiler.visit_column(element, **kw)
                 try:
                     if element.is_literal and hasattr(element.type, 'python_type') and \
@@ -1144,7 +1149,7 @@ class TableColumn(Model, AuditMixinNullable):
         elif tf == 'epoch_s':
             return str((dttm - datetime(1970, 1, 1)).total_seconds())
         elif tf == 'epoch_ms':
-            return str((dttm - datetime(1970, 1, 1)).total_seconds()*1000.0)
+            return str((dttm - datetime(1970, 1, 1)).total_seconds() * 1000.0)
         else:
             default = "'{}'".format(dttm.strftime(tf))
             iso = dttm.isoformat()
@@ -1178,6 +1183,7 @@ class DruidCluster(Model, AuditMixinNullable):
     broker_port = Column(Integer)
     broker_endpoint = Column(String(255), default='druid/v2')
     metadata_last_refreshed = Column(DateTime)
+    cache_timeout = Column(Integer)
 
     def __repr__(self):
         return self.cluster_name
@@ -1242,6 +1248,10 @@ class DruidDatasource(Model, AuditMixinNullable, Queryable):
         return sorted(
             [(m.metric_name, m.verbose_name) for m in self.metrics],
             key=lambda x: x[1])
+
+    @property
+    def database(self):
+        return self.cluster
 
     @property
     def num_cols(self):
@@ -1941,7 +1951,7 @@ class Query(Model):
 
     __tablename__ = 'query'
     id = Column(Integer, primary_key=True)
-    client_id = Column(String(11), unique=True)
+    client_id = Column(String(11), unique=True, nullable=False)
 
     database_id = Column(Integer, ForeignKey('dbs.id'), nullable=False)
 
@@ -1961,6 +1971,7 @@ class Query(Model):
     # Could be configured in the caravel config.
     limit = Column(Integer)
     limit_used = Column(Boolean, default=False)
+    limit_reached = Column(Boolean, default=False)
     select_as_cta = Column(Boolean)
     select_as_cta_used = Column(Boolean, default=False)
 
@@ -1982,6 +1993,10 @@ class Query(Model):
     __table_args__ = (
         sqla.Index('ti_user_id_changed_on', user_id, changed_on),
     )
+
+    @property
+    def limit_reached(self):
+        return self.rows == self.limit if self.limit_used else False
 
     def to_dict(self):
         return {
@@ -2005,6 +2020,7 @@ class Query(Model):
             'tab': self.tab_name,
             'tempTable': self.tmp_table_name,
             'userId': self.user_id,
+            'limit_reached': self.limit_reached,
         }
 
     @property

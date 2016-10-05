@@ -1,4 +1,3 @@
-"""Flask web views for Caravel"""
 from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
@@ -43,6 +42,10 @@ config = app.config
 log_this = models.Log.log_this
 can_access = utils.can_access
 QueryStatus = models.QueryStatus
+DRUID_TIME_GRAINS = [
+    'all', '5 seconds', '30 seconds', '1 minute',
+    '5 minutes', '1 hour', '6 hour', '1 day', '7 days'
+]
 
 
 class BaseCaravelView(BaseView):
@@ -58,12 +61,8 @@ class BaseCaravelView(BaseView):
                 self.can_access("database_access", database.perm))
 
     def datasource_access(self, datasource):
-        if hasattr(datasource, "cluster"):
-            return (self.database_access(datasource.cluster) or
-                    self.can_access("datasource_access", datasource.perm))
-        else:
-            return (self.database_access(datasource.database) or
-                    self.can_access("datasource_access", datasource.perm))
+        return (self.database_access(datasource.database) or
+                self.can_access("datasource_access", datasource.perm))
 
 
 class ListWidgetWithCheckboxes(ListWidget):
@@ -203,6 +202,7 @@ class FilterSlice(CaravelFilter):
 
 
 class FilterDashboard(CaravelFilter):
+    """List dashboards for which users have access to at least one slice"""
     def apply(self, query, func):  # noqa
         if any([r.name in ('Admin', 'Alpha') for r in get_user_roles()]):
             return query
@@ -663,7 +663,7 @@ class DruidClusterModelView(CaravelModelView, DeleteMixin):  # noqa
     add_columns = [
         'cluster_name',
         'coordinator_host', 'coordinator_port', 'coordinator_endpoint',
-        'broker_host', 'broker_port', 'broker_endpoint',
+        'broker_host', 'broker_port', 'broker_endpoint', 'cache_timeout',
     ]
     edit_columns = add_columns
     list_columns = ['cluster_name', 'metadata_last_refreshed']
@@ -999,52 +999,42 @@ class Caravel(BaseCaravelView):
     """The base views for Caravel!"""
     @log_this
     @has_access
-    @expose("/request_access_form/<datasource_type>/<datasource_id>/"
-            "<datasource_name>")
-    def request_access_form(
-            self, datasource_type, datasource_id, datasource_name):
-        request_access_url = (
-            '/caravel/request_access?datasource_type={}&datasource_id={}&'
-            'datasource_name=datasource_name'.format(
-                datasource_type, datasource_id, datasource_name)
-        )
-        return self.render_template(
-            'caravel/request_access.html',
-            request_access_url=request_access_url,
-            datasource_name=datasource_name,
-            slicemodelview_link='/slicemodelview/list/')
-
-    @log_this
-    @has_access
-    @expose("/request_access")
+    @expose("/request_access/")
     def request_access(self):
+        datasources = set()
+        dashboard_id = request.args.get('dashboard_id')
+        if dashboard_id:
+            dash = (
+                db.session.query(models.Dashboard)
+                .filter_by(id=int(dashboard_id))
+                .one()
+            )
+            datasources |= dash.datasources
         datasource_id = request.args.get('datasource_id')
         datasource_type = request.args.get('datasource_type')
-        datasource_name = request.args.get('datasource_name')
-        session = db.session
+        if datasource_id:
+            ds_class = SourceRegistry.sources.get(datasource_type)
+            datasource = (
+                db.session.query(ds_class)
+                .filter_by(id=int(datasource_id))
+                .one()
+            )
+            datasources.add(datasource)
+        if request.args.get('action') == 'go':
+            for datasource in datasources:
+                access_request = DAR(
+                    datasource_id=datasource.id,
+                    datasource_type=datasource.type)
+                db.session.add(access_request)
+                db.session.commit()
+            flash(__("Access was requested"), "info")
+            return redirect('/')
 
-        duplicates = (
-            session.query(DAR)
-            .filter(
-                DAR.datasource_id == datasource_id,
-                DAR.datasource_type == datasource_type,
-                DAR.created_by_fk == g.user.id)
-            .all()
+        return self.render_template(
+            'caravel/request_access.html',
+            datasources=datasources,
+            datasource_names=", ".join([o.name for o in datasources]),
         )
-
-        if duplicates:
-            flash(__(
-                "You have already requested access to the datasource %(name)s",
-                name=datasource_name), "warning")
-            return redirect('/slicemodelview/list/')
-
-        access_request = DAR(datasource_id=datasource_id,
-                             datasource_type=datasource_type)
-        db.session.add(access_request)
-        db.session.commit()
-        flash(__("Access to the datasource %(name)s was requested",
-                 name=datasource_name), "info")
-        return redirect('/slicemodelview/list/')
 
     @log_this
     @has_access
@@ -1133,8 +1123,11 @@ class Caravel(BaseCaravelView):
         if not self.datasource_access(datasource):
             flash(
                 __(get_datasource_access_error_msg(datasource.name)), "danger")
-            return redirect('caravel/request_access_form/{}/{}/{}'.format(
-                datasource_type, datasource_id, datasource.name))
+            return redirect(
+                'caravel/request_access/?'
+                'datasource_type={datasource_type}&'
+                'datasource_id={datasource_id}&'
+                ''.format(**locals()))
 
         request_args_multi_dict = request.args  # MultiDict
 
@@ -1211,6 +1204,114 @@ class Caravel(BaseCaravelView):
                 can_add=slice_add_perm, can_edit=slice_edit_perm,
                 can_download=slice_download_perm,
                 userid=g.user.get_id() if g.user else '')
+
+    @has_access
+    @expose("/exploreV2/<datasource_type>/<datasource_id>/<slice_id>/")
+    @expose("/exploreV2/<datasource_type>/<datasource_id>/")
+    @log_this
+    def exploreV2(self, datasource_type, datasource_id, slice_id=None):
+        error_redirect = '/slicemodelview/list/'
+        datasource_class = SourceRegistry.sources[datasource_type]
+        datasources = db.session.query(datasource_class).all()
+        datasources = sorted(datasources, key=lambda ds: ds.full_name)
+        datasource = [ds for ds in datasources if int(datasource_id) == ds.id]
+        datasource = datasource[0] if datasource else None
+
+        if not datasource:
+            flash(DATASOURCE_MISSING_ERR, "alert")
+            return redirect(error_redirect)
+
+        if not self.datasource_access(datasource):
+            flash(
+                __(get_datasource_access_error_msg(datasource.name)), "danger")
+            return redirect('caravel/request_access_form/{}/{}/{}'.format(
+                datasource_type, datasource_id, datasource.name))
+
+        request_args_multi_dict = request.args  # MultiDict
+
+        slice_id = slice_id or request_args_multi_dict.get("slice_id")
+        slc = None
+        # build viz_obj and get it's params
+        if slice_id:
+            slc = db.session.query(models.Slice).filter_by(id=slice_id).first()
+            try:
+                viz_obj = slc.get_viz(
+                    url_params_multidict=request_args_multi_dict)
+            except Exception as e:
+                logging.exception(e)
+                flash(utils.error_msg_from_exception(e), "danger")
+                return redirect(error_redirect)
+        else:
+            viz_type = request_args_multi_dict.get("viz_type")
+            if not viz_type and datasource.default_endpoint:
+                return redirect(datasource.default_endpoint)
+            # default to table if no default endpoint and no viz_type
+            viz_type = viz_type or "table"
+            # validate viz params
+            try:
+                viz_obj = viz.viz_types[viz_type](
+                    datasource, request_args_multi_dict)
+            except Exception as e:
+                logging.exception(e)
+                flash(utils.error_msg_from_exception(e), "danger")
+                return redirect(error_redirect)
+        slice_params_multi_dict = ImmutableMultiDict(viz_obj.orig_form_data)
+
+        # slc perms
+        slice_add_perm = self.can_access('can_add', 'SliceModelView')
+        slice_edit_perm = check_ownership(slc, raise_if_false=False)
+        slice_download_perm = self.can_access('can_download', 'SliceModelView')
+
+        # handle save or overwrite
+        action = slice_params_multi_dict.get('action')
+        if action in ('saveas', 'overwrite'):
+            return self.save_or_overwrite_slice(
+                slice_params_multi_dict, slc, slice_add_perm, slice_edit_perm)
+
+        # handle different endpoints
+        if slice_params_multi_dict.get("json") == "true":
+            if config.get("DEBUG"):
+                # Allows for nice debugger stack traces in debug mode
+                return Response(
+                    viz_obj.get_json(),
+                    status=200,
+                    mimetype="application/json")
+            try:
+                return Response(
+                    viz_obj.get_json(),
+                    status=200,
+                    mimetype="application/json")
+            except Exception as e:
+                logging.exception(e)
+                return json_error_response(utils.error_msg_from_exception(e))
+
+        elif slice_params_multi_dict.get("csv") == "true":
+            payload = viz_obj.get_csv()
+            return Response(
+                payload,
+                status=200,
+                headers=generate_download_headers("csv"),
+                mimetype="application/csv")
+        else:
+            bootstrap_data = {
+                "can_add": slice_add_perm,
+                "can_download": slice_download_perm,
+                "can_edit": slice_edit_perm,
+                # TODO: separate endpoint for fetching datasources
+                "datasources": [(d.id, d.full_name) for d in datasources],
+                "datasource_id": datasource_id,
+                "datasource_type": datasource_type,
+                "datasource_class": datasource_class.__name__,
+                "user_id": g.user.get_id() if g.user else None,
+                "viz": json.loads(viz_obj.get_json())
+            }
+            if slice_params_multi_dict.get("standalone") == "true":
+                template = "caravel/standalone.html"
+            else:
+                template = "caravel/explorev2.html"
+            return self.render_template(
+                    template,
+                    bootstrap_data=json.dumps(bootstrap_data))
 
     def save_or_overwrite_slice(
             self, args, slc, slice_add_perm, slice_edit_perm):
@@ -1525,7 +1626,17 @@ class Caravel(BaseCaravelView):
             qry = qry.filter_by(slug=dashboard_id)
 
         templates = session.query(models.CssTemplate).all()
-        dash = qry.first()
+        dash = qry.one()
+        datasources = {slc.datasource for slc in dash.slices}
+        for datasource in datasources:
+            if not self.datasource_access(datasource):
+                flash(
+                    __(get_datasource_access_error_msg(datasource.name)),
+                    "danger")
+                return redirect(
+                    'caravel/request_access/?'
+                    'dashboard_id={dash.id}&'
+                    ''.format(**locals()))
 
         # Hack to log the dashboard_id properly, even when getting a slug
         @log_this
@@ -1533,7 +1644,8 @@ class Caravel(BaseCaravelView):
             pass
         dashboard(dashboard_id=dash.id)
         dash_edit_perm = check_ownership(dash, raise_if_false=False)
-        dash_save_perm = dash_edit_perm and self.can_access('can_save_dash', 'Caravel')
+        dash_save_perm = \
+            dash_edit_perm and self.can_access('can_save_dash', 'Caravel')
         return self.render_template(
             "caravel/dashboard.html", dashboard=dash,
             user_id=g.user.get_id(),
@@ -1600,9 +1712,7 @@ class Caravel(BaseCaravelView):
         viz_type = data.get('chartType')
         table = db.session.query(models.SqlaTable).filter_by(table_name=table_name).first()
         if not table:
-            table = models.SqlaTable(
-                table_name=table_name,
-            )
+            table = models.SqlaTable(table_name=table_name)
         table.database_id = data.get('dbId')
         table.sql = data.get('sql')
         db.session.add(table)
@@ -1834,6 +1944,49 @@ class Caravel(BaseCaravelView):
         return response
 
     @has_access
+    @expose("/fetch_datasource_metadata")
+    @log_this
+    def fetch_datasource_metadata(self):
+        session = db.session
+        datasource_type = request.args.get('datasource_type')
+        datasource_class = SourceRegistry.sources[datasource_type]
+        datasource = (
+            session.query(datasource_class)
+            .filter_by(id=request.args.get('datasource_id'))
+            .first()
+        )
+
+        # Check if datasource exists
+        if not datasource:
+            return json_error_response(DATASOURCE_MISSING_ERR)
+        # Check permission for datasource
+        if not self.datasource_access(datasource):
+            return json_error_response(DATASOURCE_ACCESS_ERR)
+
+        time_columns = []
+        grains_choices = []
+        datasource_class_name = datasource_class.__name__
+        if datasource_class_name == 'SqlaTable':
+            time_columns = datasource.dttm_cols
+            grains = datasource.database.grains()
+            grains_choices = [grain.name for grain in grains]
+        elif datasource_class_name == 'DruidDatasource':
+            time_columns = DRUID_TIME_GRAINS
+            grains_choices = ['now']
+
+        form_data = {
+            "datasource_class": datasource_class_name,
+            "time_columns": time_columns,
+            "time_grains": grains_choices,
+            "groupby_cols": datasource.groupby_column_names,
+            "metrics": datasource.metrics_combo,
+            "filter_cols": datasource.filterable_column_names,
+        }
+
+        return Response(
+            json.dumps(form_data), mimetype="application/json")
+
+    @has_access
     @expose("/queries/<last_updated_ms>")
     @log_this
     def queries(self, last_updated_ms):
@@ -1858,6 +2011,41 @@ class Caravel(BaseCaravelView):
             )
             .all()
         )
+        dict_queries = {q.client_id: q.to_dict() for q in sql_queries}
+        return Response(
+            json.dumps(dict_queries, default=utils.json_int_dttm_ser),
+            status=200,
+            mimetype="application/json")
+
+    @has_access
+    @expose("/search_queries")
+    @log_this
+    def search_queries(self):
+        """Search for queries."""
+        query = db.session.query(models.Query)
+        userId = request.args.get('userId')
+        databaseId = request.args.get('databaseId')
+        searchText = request.args.get('searchText')
+        status = request.args.get('status')
+
+        if userId != 'null':
+            # Filter on db Id
+            query = query.filter(models.Query.user_id == userId)
+
+        if databaseId != 'null':
+            # Filter on db Id
+            query = query.filter(models.Query.database_id == databaseId)
+
+        if status != 'null':
+            # Filter on status
+            query = query.filter(models.Query.status == status)
+
+        if searchText != 'null':
+            # Filter on search text
+            query = query.filter(models.Query.sql.like('%{}%'.format(searchText)))
+
+        sql_queries = query.limit(config.get("QUERY_SEARCH_LIMIT")).all()
+
         dict_queries = {q.client_id: q.to_dict() for q in sql_queries}
         return Response(
             json.dumps(dict_queries, default=utils.json_int_dttm_ser),
@@ -1938,9 +2126,17 @@ appbuilder.add_view(
     category_icon='')
 
 appbuilder.add_link(
-    'SQL Lab <span class="label label-danger">alpha</span>',
+    'SQL Editor',
     href='/caravel/sqllab',
-    icon="fa-flask")
+    category_icon="fa-flask",
+    icon="fa-flask",
+    category='SQL Lab')
+appbuilder.add_link(
+    'Query Search',
+    href='/caravel/sqllab#search',
+    icon="fa-search",
+    category_icon="fa-flask",
+    category='SQL Lab')
 
 
 @app.after_request
