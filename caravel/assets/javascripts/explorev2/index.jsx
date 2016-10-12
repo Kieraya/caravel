@@ -1,7 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
 import ExploreViewContainer from './components/ExploreViewContainer';
-
 import { createStore, applyMiddleware, compose } from 'redux';
 import { Provider } from 'react-redux';
 import thunk from 'redux-thunk';
@@ -17,17 +16,23 @@ const bootstrappedState = Object.assign(initialState, {
   datasources: bootstrapData.datasources,
   datasourceId: parseInt(bootstrapData.datasource_id, 10),
   datasourceType: bootstrapData.datasource_type,
-  datasourceClass: bootstrapData.datasource_class,
   sliceName: bootstrapData.viz.form_data.slice_name,
-  sliceId: bootstrapData.viz.form_data.slice_id,
-  vizType: bootstrapData.viz.form_data.viz_type,
-  timeColumn: bootstrapData.viz.form_data.granularity_sqla,
-  timeGrain: bootstrapData.viz.form_data.time_grain_sqla,
-  metrics: [bootstrapData.viz.form_data.metrics].map((m) => ({ value: m, label: m })),
-  since: bootstrapData.viz.form_data.since,
-  until: bootstrapData.viz.form_data.until,
-  havingClause: bootstrapData.viz.form_data.having,
-  whereClause: bootstrapData.viz.form_data.where,
+  viz: {
+    data: bootstrapData.viz.data,
+    formData: {
+      sliceId: bootstrapData.viz.form_data.slice_id,
+      vizType: bootstrapData.viz.form_data.viz_type,
+      timeColumn: bootstrapData.viz.form_data.granularity_sqla,
+      timeGrain: bootstrapData.viz.form_data.time_grain_sqla,
+      metrics: [bootstrapData.viz.form_data.metrics].map((m) => ({ value: m, label: m })),
+      since: bootstrapData.viz.form_data.since,
+      until: bootstrapData.viz.form_data.until,
+      having: bootstrapData.viz.form_data.having,
+      where: bootstrapData.viz.form_data.where,
+      rowLimit: bootstrapData.viz.form_data.row_limit,
+      timeStampFormat: bootstrapData.viz.form_data.table_timestamp_format,
+    },
+  },
 });
 const store = createStore(exploreReducer, bootstrappedState,
   compose(applyMiddleware(thunk))
@@ -35,9 +40,7 @@ const store = createStore(exploreReducer, bootstrappedState,
 
 ReactDOM.render(
   <Provider store={store}>
-    <ExploreViewContainer
-      data={bootstrapData}
-    />
+    <ExploreViewContainer />
   </Provider>,
   exploreViewContainer
 );

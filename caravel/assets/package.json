@@ -48,6 +48,7 @@
     "d3": "^3.5.14",
     "d3-cloud": "^1.2.1",
     "d3-sankey": "^0.2.1",
+    "d3-scale": "^1.0.3",
     "d3-tip": "^0.6.7",
     "datamaps": "^0.4.4",
     "datatables-bootstrap3-plugin": "^0.4.0",
@@ -84,13 +85,14 @@
     "style-loader": "^0.13.0",
     "supercluster": "https://github.com/georgeke/supercluster/tarball/ac3492737e7ce98e07af679623aad452373bbc40",
     "topojson": "^1.6.22",
+    "victory": "^0.12.1",
     "viewport-mercator-project": "^2.1.0"
   },
   "devDependencies": {
     "babel": "^6.3.26",
     "babel-core": "^6.10.4",
     "babel-loader": "^6.2.4",
-    "babel-preset-airbnb": "^2.0.0",
+    "babel-preset-airbnb": "^2.1.1",
     "babel-preset-react": "^6.11.1",
     "chai": "^3.5.0",
     "codeclimate-test-reporter": "^0.3.3",

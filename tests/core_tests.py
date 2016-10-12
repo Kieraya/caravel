@@ -15,7 +15,11 @@ import unittest
 from flask import escape
 from flask_appbuilder.security.sqla import models as ab_models
 
-from caravel import db, models, utils, appbuilder, sm
+import caravel
+from caravel import app, db, models, utils, appbuilder, sm
+from caravel.source_registry import SourceRegistry
+from caravel.models import DruidDatasource
+from caravel.views import DatabaseView
 
 from .base_tests import CaravelTestCase
 
@@ -43,6 +47,33 @@ class CoreTests(CaravelTestCase):
 
     def tearDown(self):
         pass
+
+    def test_welcome(self):
+        self.login()
+        resp = self.client.get('/caravel/welcome')
+        assert 'Welcome' in resp.data.decode('utf-8')
+
+    def test_slice_endpoint(self):
+        self.login(username='admin')
+        slc = self.get_slice("Girls", db.session)
+        resp = self.get_resp('/caravel/slice/{}/'.format(slc.id))
+        assert 'Time Column' in resp
+        assert 'List Roles' in resp
+
+        # Testing overrides
+        resp = self.get_resp(
+            '/caravel/slice/{}/?standalone=true'.format(slc.id))
+        assert 'List Roles' not in resp
+
+    def test_endpoints_for_a_slice(self):
+        self.login(username='admin')
+        slc = self.get_slice("Girls", db.session)
+
+        resp = self.get_resp(slc.viz.csv_endpoint)
+        assert 'Jennifer,' in resp
+
+        resp = self.get_resp(slc.viz.json_endpoint)
+        assert '"Jennifer"' in resp
 
     def test_admin_only_permissions(self):
         def assert_admin_permission_in(role_name, assert_func):
@@ -73,13 +104,7 @@ class CoreTests(CaravelTestCase):
 
     def test_save_slice(self):
         self.login(username='admin')
-
-        slc = (
-            db.session.query(models.Slice.id)
-            .filter_by(slice_name="Energy Sankey")
-            .first())
-        slice_id = slc.id
-
+        slice_id = self.get_slice("Energy Sankey", db.session).id
         copy_name = "Test Sankey Save"
         tbl_id = self.table_ids.get('energy_usage')
         url = (
@@ -155,6 +180,17 @@ class CoreTests(CaravelTestCase):
         response = self.client.post('/caravel/testconn', data=data, content_type='application/json')
         assert response.status_code == 200
 
+    def test_databaseview_edit(self, username='admin'):
+        # validate that sending a password-masked uri does not over-write the decrypted uri
+        self.login(username=username)
+        database = db.session.query(models.Database).filter_by(database_name='main').first()
+        sqlalchemy_uri_decrypted = database.sqlalchemy_uri_decrypted
+        url = 'databaseview/edit/{}'.format(database.id)
+        data = {k: database.__getattribute__(k) for k in DatabaseView.add_columns}
+        data['sqlalchemy_uri'] = database.safe_sqlalchemy_uri()
+        response = self.client.post(url, data=data)
+        database = db.session.query(models.Database).filter_by(database_name='main').first()
+        self.assertEqual(sqlalchemy_uri_decrypted, database.sqlalchemy_uri_decrypted)
 
     def test_warm_up_cache(self):
         slice = db.session.query(models.Slice).first()
@@ -375,6 +411,18 @@ class CoreTests(CaravelTestCase):
         resp = self.get_resp('/dashboardmodelview/list/')
         assert "/caravel/dashboard/world_health/" not in resp
 
+    def test_dashboard_with_created_by_can_be_accessed_by_public_users(self):
+        self.logout()
+        self.setup_public_access_for_dashboard('birth_names')
+
+        dash = db.session.query(models.Dashboard).filter_by(dashboard_title="Births").first()
+        dash.owners = [appbuilder.sm.find_user('admin')]
+        dash.created_by = appbuilder.sm.find_user('admin')
+        db.session.merge(dash)
+        db.session.commit()
+
+        assert 'Births' in self.get_resp('/caravel/dashboard/births/')
+
     def test_only_owners_can_save(self):
         dash = (
             db.session
@@ -403,7 +451,6 @@ class CoreTests(CaravelTestCase):
         db.session.merge(dash)
         db.session.commit()
         self.test_save_dash('alpha')
-
 
 if __name__ == '__main__':
     unittest.main()

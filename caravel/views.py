@@ -5,6 +5,8 @@ from __future__ import unicode_literals
 
 import json
 import logging
+import os
+import pickle
 import re
 import sys
 import time
@@ -15,7 +17,8 @@ import functools
 import sqlalchemy as sqla
 
 from flask import (
-    g, request, redirect, flash, Response, render_template, Markup)
+    g, request, make_response, redirect, flash, Response, render_template,
+    Markup, url_for)
 from flask_appbuilder import ModelView, CompactCRUDMixin, BaseView, expose
 from flask_appbuilder.actions import action
 from flask_appbuilder.models.sqla.interface import SQLAInterface
@@ -26,6 +29,7 @@ from flask_babel import lazy_gettext as _
 from flask_appbuilder.models.sqla.filters import BaseFilter
 
 from sqlalchemy import create_engine
+from werkzeug import secure_filename
 from werkzeug.datastructures import ImmutableMultiDict
 from werkzeug.routing import BaseConverter
 from wtforms.validators import ValidationError
@@ -42,10 +46,6 @@ config = app.config
 log_this = models.Log.log_this
 can_access = utils.can_access
 QueryStatus = models.QueryStatus
-DRUID_TIME_GRAINS = [
-    'all', '5 seconds', '30 seconds', '1 minute',
-    '5 minutes', '1 hour', '6 hour', '1 day', '7 days'
-]
 
 
 class BaseCaravelView(BaseView):
@@ -140,6 +140,14 @@ def check_ownership(obj, raise_if_false=True):
     """
     if not obj:
         return False
+
+    security_exception = utils.CaravelSecurityException(
+              "You don't have the rights to alter [{}]".format(obj))
+
+    if g.user.is_anonymous():
+        if raise_if_false:
+            raise security_exception
+        return False
     roles = (r.name for r in get_user_roles())
     if 'Admin' in roles:
         return True
@@ -158,8 +166,7 @@ def check_ownership(obj, raise_if_false=True):
             g.user.username in owner_names):
         return True
     if raise_if_false:
-        raise utils.CaravelSecurityException(
-            "You don't have the rights to alter [{}]".format(obj))
+        raise security_exception
     else:
         return False
 
@@ -248,7 +255,8 @@ class FilterDruidDatasource(CaravelFilter):
         druid_datasources = []
         for perm in perms:
             match = re.search(r'\(id:(\d+)\)', perm)
-            druid_datasources.append(match.group(1))
+            if match:
+                druid_datasources.append(match.group(1))
         qry = query.filter(self.model.id.in_(druid_datasources))
         return qry
 
@@ -529,6 +537,16 @@ class DatabaseView(CaravelModelView, DeleteMixin):  # noqa
         self.pre_add(db)
 
 
+appbuilder.add_link(
+    'Import Dashboards',
+    label=__("Import Dashboards"),
+    href='/caravel/import_dashboards',
+    icon="fa-cloud-upload",
+    category='Manage',
+    category_label=__("Manage"),
+    category_icon='fa-wrench',)
+
+
 appbuilder.add_view(
     DatabaseView,
     "Databases",
@@ -654,7 +672,6 @@ appbuilder.add_view(
     category_label=__("Security"),
     icon='fa-table',)
 
-
 appbuilder.add_separator("Sources")
 
 
@@ -676,6 +693,7 @@ class DruidClusterModelView(CaravelModelView, DeleteMixin):  # noqa
         'broker_port': _("Broker Port"),
         'broker_endpoint': _("Broker Endpoint"),
     }
+
     def pre_add(self, db):
         utils.merge_perm(sm, 'database_access', db.perm)
 
@@ -703,7 +721,8 @@ class SliceModelView(CaravelModelView, DeleteMixin):  # noqa
     list_columns = [
         'slice_link', 'viz_type', 'datasource_link', 'creator', 'modified']
     edit_columns = [
-        'slice_name', 'description', 'viz_type', 'owners', 'dashboards', 'params', 'cache_timeout']
+        'slice_name', 'description', 'viz_type', 'owners', 'dashboards',
+        'params', 'cache_timeout']
     base_order = ('changed_on', 'desc')
     description_columns = {
         'description': Markup(
@@ -861,13 +880,32 @@ class DashboardModelView(CaravelModelView, DeleteMixin):  # noqa
     def pre_delete(self, obj):
         check_ownership(obj)
 
+    @action("mulexport", "Export", "Export dashboards?", "fa-database")
+    def mulexport(self, items):
+        ids = ''.join('&id={}'.format(d.id) for d in items)
+        return redirect(
+            '/dashboardmodelview/export_dashboards_form?{}'.format(ids[1:]))
+
+    @expose("/export_dashboards_form")
+    def download_dashboards(self):
+        if request.args.get('action') == 'go':
+            ids = request.args.getlist('id')
+            return Response(
+                models.Dashboard.export_dashboards(ids),
+                headers=generate_download_headers("pickle"),
+                mimetype="application/text")
+        return self.render_template(
+            'caravel/export_dashboards.html',
+            dashboards_url='/dashboardmodelview/list'
+        )
+
 
 appbuilder.add_view(
     DashboardModelView,
     "Dashboards",
     label=__("Dashboards"),
     icon="fa-dashboard",
-    category="",
+    category='',
     category_icon='',)
 
 
@@ -1047,9 +1085,8 @@ class Caravel(BaseCaravelView):
         role_to_extend = request.args.get('role_to_extend')
 
         session = db.session
-        datasource_class = SourceRegistry.sources[datasource_type]
-        datasource = session.query(datasource_class).filter_by(
-            id=datasource_id).first()
+        datasource = SourceRegistry.get_datasource(
+            datasource_type, datasource_id, session)
 
         if not datasource:
             flash(DATASOURCE_MISSING_ERR, "alert")
@@ -1103,61 +1140,101 @@ class Caravel(BaseCaravelView):
         session.commit()
         return redirect('/accessrequestsmodelview/list/')
 
+    def get_viz(
+            self,
+            slice_id=None,
+            args=None,
+            datasource_type=None,
+            datasource_id=None):
+        if slice_id:
+            slc = db.session.query(models.Slice).filter_by(id=slice_id).one()
+            return slc.get_viz()
+        else:
+            viz_type = args.get('viz_type', 'table')
+            datasource = SourceRegistry.get_datasource(
+                datasource_type, datasource_id, db.session)
+            viz_obj = viz.viz_types[viz_type](datasource, request.args)
+            return viz_obj
+
     @has_access
-    @expose("/explore/<datasource_type>/<datasource_id>/<slice_id>/")
-    @expose("/explore/<datasource_type>/<datasource_id>/")
-    @expose("/datasource/<datasource_type>/<datasource_id>/")  # Legacy url
+    @expose("/slice/<slice_id>/")
+    def slice(self, slice_id):
+        viz_obj = self.get_viz(slice_id)
+        return redirect(viz_obj.get_url(**request.args))
+
+    @has_access_api
+    @expose("/explore_json/<datasource_type>/<datasource_id>/")
+    def explore_json(self, datasource_type, datasource_id):
+        viz_obj = self.get_viz(
+            datasource_type=datasource_type,
+            datasource_id=datasource_id,
+            args=request.args)
+        if not self.datasource_access(viz_obj.datasource):
+            return Response(
+                json.dumps(
+                    {'error': _("You don't have access to this datasource")}),
+                status=404,
+                mimetype="application/json")
+        return Response(
+            viz_obj.get_json(),
+            status=200,
+            mimetype="application/json")
+
+    @expose("/import_dashboards", methods=['GET', 'POST'])
     @log_this
-    def explore(self, datasource_type, datasource_id, slice_id=None):
+    def import_dashboards(self):
+        """Overrides the dashboards using pickled instances from the file."""
+        f = request.files.get('file')
+        if request.method == 'POST' and f:
+            filename = secure_filename(f.filename)
+            filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+            f.save(filepath)
+            current_tt = int(time.time())
+            data = pickle.load(open(filepath, 'rb'))
+            for table in data['datasources']:
+                models.SqlaTable.import_obj(table, import_time=current_tt)
+            for dashboard in data['dashboards']:
+                models.Dashboard.import_obj(
+                    dashboard, import_time=current_tt)
+            os.remove(filepath)
+            db.session.commit()
+            return redirect('/dashboardmodelview/list/')
+        return self.render_template('caravel/import_dashboards.html')
+
+    @log_this
+    @has_access
+    @expose("/explore/<datasource_type>/<datasource_id>/")
+    def explore(self, datasource_type, datasource_id):
+        viz_type = request.args.get("viz_type")
+        slice_id = request.args.get('slice_id')
+        slc = db.session.query(models.Slice).filter_by(id=slice_id).first()
+
         error_redirect = '/slicemodelview/list/'
         datasource_class = SourceRegistry.sources[datasource_type]
         datasources = db.session.query(datasource_class).all()
         datasources = sorted(datasources, key=lambda ds: ds.full_name)
-        datasource = [ds for ds in datasources if int(datasource_id) == ds.id]
-        datasource = datasource[0] if datasource else None
 
-        if not datasource:
+        viz_obj = self.get_viz(
+            datasource_type=datasource_type,
+            datasource_id=datasource_id,
+            args=request.args)
+
+        if not viz_obj.datasource:
             flash(DATASOURCE_MISSING_ERR, "alert")
             return redirect(error_redirect)
 
-        if not self.datasource_access(datasource):
+        if not self.datasource_access(viz_obj.datasource):
             flash(
-                __(get_datasource_access_error_msg(datasource.name)), "danger")
+                __(get_datasource_access_error_msg(viz_obj.datasource.name)),
+                "danger")
             return redirect(
                 'caravel/request_access/?'
                 'datasource_type={datasource_type}&'
                 'datasource_id={datasource_id}&'
                 ''.format(**locals()))
 
-        request_args_multi_dict = request.args  # MultiDict
-
-        slice_id = slice_id or request_args_multi_dict.get("slice_id")
-        slc = None
-        # build viz_obj and get it's params
-        if slice_id:
-            slc = db.session.query(models.Slice).filter_by(id=slice_id).first()
-            try:
-                viz_obj = slc.get_viz(
-                    url_params_multidict=request_args_multi_dict)
-            except Exception as e:
-                logging.exception(e)
-                flash(utils.error_msg_from_exception(e), "danger")
-                return redirect(error_redirect)
-        else:
-            viz_type = request_args_multi_dict.get("viz_type")
-            if not viz_type and datasource.default_endpoint:
-                return redirect(datasource.default_endpoint)
-            # default to table if no default endpoint and no viz_type
-            viz_type = viz_type or "table"
-            # validate viz params
-            try:
-                viz_obj = viz.viz_types[viz_type](
-                    datasource, request_args_multi_dict)
-            except Exception as e:
-                logging.exception(e)
-                flash(utils.error_msg_from_exception(e), "danger")
-                return redirect(error_redirect)
-        slice_params_multi_dict = ImmutableMultiDict(viz_obj.orig_form_data)
+        if not viz_type and viz_obj.datasource.default_endpoint:
+            return redirect(viz_obj.datasource.default_endpoint)
 
         # slc perms
         slice_add_perm = self.can_access('can_add', 'SliceModelView')
@@ -1165,45 +1242,29 @@ class Caravel(BaseCaravelView):
         slice_download_perm = self.can_access('can_download', 'SliceModelView')
 
         # handle save or overwrite
-        action = slice_params_multi_dict.get('action')
+        action = request.args.get('action')
         if action in ('saveas', 'overwrite'):
             return self.save_or_overwrite_slice(
-                slice_params_multi_dict, slc, slice_add_perm, slice_edit_perm)
+                request.args, slc, slice_add_perm, slice_edit_perm)
 
         # handle different endpoints
-        if slice_params_multi_dict.get("json") == "true":
-            if config.get("DEBUG"):
-                # Allows for nice debugger stack traces in debug mode
-                return Response(
-                    viz_obj.get_json(),
-                    status=200,
-                    mimetype="application/json")
-            try:
-                return Response(
-                    viz_obj.get_json(),
-                    status=200,
-                    mimetype="application/json")
-            except Exception as e:
-                logging.exception(e)
-                return json_error_response(utils.error_msg_from_exception(e))
-
-        elif slice_params_multi_dict.get("csv") == "true":
+        if request.args.get("csv") == "true":
             payload = viz_obj.get_csv()
             return Response(
                 payload,
                 status=200,
                 headers=generate_download_headers("csv"),
                 mimetype="application/csv")
+        elif request.args.get("standalone") == "true":
+            return self.render_template("caravel/standalone.html", viz=viz_obj)
         else:
-            if slice_params_multi_dict.get("standalone") == "true":
-                template = "caravel/standalone.html"
-            else:
-                template = "caravel/explore.html"
             return self.render_template(
-                template, viz=viz_obj, slice=slc, datasources=datasources,
+                "caravel/explore.html",
+                viz=viz_obj, slice=slc, datasources=datasources,
                 can_add=slice_add_perm, can_edit=slice_edit_perm,
                 can_download=slice_download_perm,
-                userid=g.user.get_id() if g.user else '')
+                userid=g.user.get_id() if g.user else ''
+            )
 
     @has_access
     @expose("/exploreV2/<datasource_type>/<datasource_id>/<slice_id>/")
@@ -1301,7 +1362,6 @@ class Caravel(BaseCaravelView):
                 "datasources": [(d.id, d.full_name) for d in datasources],
                 "datasource_id": datasource_id,
                 "datasource_type": datasource_type,
-                "datasource_class": datasource_class.__name__,
                 "user_id": g.user.get_id() if g.user else None,
                 "viz": json.loads(viz_obj.get_json())
             }
@@ -1470,7 +1530,7 @@ class Caravel(BaseCaravelView):
         dash.slices = [o for o in dash.slices if o.id in slice_ids]
         positions = sorted(data['positions'], key=lambda x: int(x['slice_id']))
         dash.position_json = json.dumps(positions, indent=4, sort_keys=True)
-        md = dash.metadata_dejson
+        md = dash.params_dict
         if 'filter_immune_slices' not in md:
             md['filter_immune_slices'] = []
         if 'filter_immune_slice_fields' not in md:
@@ -1710,7 +1770,11 @@ class Caravel(BaseCaravelView):
         data = json.loads(request.args.get('data'))
         table_name = data.get('datasourceName')
         viz_type = data.get('chartType')
-        table = db.session.query(models.SqlaTable).filter_by(table_name=table_name).first()
+        table = (
+            db.session.query(models.SqlaTable)
+            .filter_by(table_name=table_name)
+            .first()
+        )
         if not table:
             table = models.SqlaTable(table_name=table_name)
         table.database_id = data.get('dbId')
@@ -1963,25 +2027,20 @@ class Caravel(BaseCaravelView):
         if not self.datasource_access(datasource):
             return json_error_response(DATASOURCE_ACCESS_ERR)
 
-        time_columns = []
-        grains_choices = []
-        datasource_class_name = datasource_class.__name__
-        if datasource_class_name == 'SqlaTable':
-            time_columns = datasource.dttm_cols
-            grains = datasource.database.grains()
-            grains_choices = [grain.name for grain in grains]
-        elif datasource_class_name == 'DruidDatasource':
-            time_columns = DRUID_TIME_GRAINS
-            grains_choices = ['now']
-
-        form_data = {
-            "datasource_class": datasource_class_name,
-            "time_columns": time_columns,
-            "time_grains": grains_choices,
+        order_by_choices = []
+        for s in sorted(datasource.num_cols):
+            order_by_choices.append(s + ' [asc]')
+            order_by_choices.append(s + ' [desc]')
+        column_opts = {
             "groupby_cols": datasource.groupby_column_names,
             "metrics": datasource.metrics_combo,
             "filter_cols": datasource.filterable_column_names,
+            "columns": datasource.column_names,
+            "ordering_cols": order_by_choices
         }
+        form_data = dict(
+            column_opts.items() + datasource.time_column_grains.items()
+        )
 
         return Response(
             json.dumps(form_data), mimetype="application/json")
