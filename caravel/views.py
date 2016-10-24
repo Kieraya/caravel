@@ -1088,25 +1088,31 @@ class Caravel(BaseCaravelView):
         for dbs in databases:
             for schema in dbs['schema']:
                 for ds_name in schema['datasources']:
-                    db_ds_names.add(utils.get_datasource_full_name(
-                        dbs['name'], ds_name, schema=schema['name']))
+                    fullname = utils.get_datasource_full_name(
+                        dbs['name'], ds_name, schema=schema['name'])
+                    db_ds_names.add(fullname)
 
         existing_datasources = SourceRegistry.get_all_datasources(db.session)
         datasources = [
             d for d in existing_datasources if d.full_name in db_ds_names]
-
         role = sm.find_role(role_name)
         # remove all permissions
         role.permissions = []
         # grant permissions to the list of datasources
-        for ds_name in datasources:
-            role.permissions.append(
-                sm.find_permission_view_menu(
-                    view_menu_name=ds_name.perm,
+        granted_perms = []
+        for datasource in datasources:
+            view_menu_perm = sm.find_permission_view_menu(
+                    view_menu_name=datasource.perm,
                     permission_name='datasource_access')
-            )
+            # prevent creating empty permissions
+            if view_menu_perm and view_menu_perm.view_menu:
+                role.permissions.append(view_menu_perm)
+                granted_perms.append(view_menu_perm.view_menu.name)
         db.session.commit()
-        return Response(status=201)
+        return Response(json.dumps({
+            'granted': granted_perms,
+            'requested': list(db_ds_names)
+        }), status=201)
 
     @log_this
     @has_access
@@ -1962,6 +1968,8 @@ class Caravel(BaseCaravelView):
         tbl = {
             'name': table_name,
             'columns': cols,
+            'selectStar': mydb.select_star(
+                table_name, schema=schema, show_cols=True, indent=True),
             'indexes': indexes,
         }
         return Response(json.dumps(tbl), mimetype="application/json")
@@ -1982,6 +1990,7 @@ class Caravel(BaseCaravelView):
     def select_star(self, database_id, table_name):
         mydb = db.session.query(
             models.Database).filter_by(id=database_id).first()
+        quote = mydb.get_quoter()
         t = mydb.get_table(table_name)
 
         # Prevent exposing column fields to users that cannot access DB.
@@ -1990,7 +1999,7 @@ class Caravel(BaseCaravelView):
             return redirect("/tablemodelview/list/")
 
         fields = ", ".join(
-            [c.name for c in t.columns] or "*")
+            [quote(c.name) for c in t.columns] or "*")
         s = "SELECT\n{}\nFROM {}".format(fields, table_name)
         return self.render_template(
             "caravel/ajah.html",

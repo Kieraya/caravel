@@ -82,15 +82,12 @@ class SqlEditorLeftBar extends React.Component {
 
     this.setState({ tableLoading: true });
     $.get(url, (data) => {
-      this.props.actions.mergeTable({
+      this.props.actions.mergeTable(Object.assign(data, {
         dbId: this.props.queryEditor.dbId,
         queryEditorId: this.props.queryEditor.id,
-        name: data.name,
-        indexes: data.indexes,
         schema: qe.schema,
-        columns: data.columns,
         expanded: true,
-      });
+      }));
       this.setState({ tableLoading: false });
     })
     .fail(() => {
@@ -127,6 +124,11 @@ class SqlEditorLeftBar extends React.Component {
           <DatabaseSelect
             onChange={this.onChange.bind(this)}
             databaseId={this.props.queryEditor.dbId}
+            valueRenderer={(o) => (
+              <div>
+                <span className="text-muted">Database:</span> {o.label}
+              </div>
+            )}
           />
         </div>
         <div className="m-t-5">
@@ -135,6 +137,11 @@ class SqlEditorLeftBar extends React.Component {
             placeholder={`Select a schema (${this.state.schemaOptions.length})`}
             options={this.state.schemaOptions}
             value={this.props.queryEditor.schema}
+            valueRenderer={(o) => (
+              <div>
+                <span className="text-muted">Schema:</span> {o.label}
+              </div>
+            )}
             isLoading={this.state.schemaLoading}
             autosize={false}
             onChange={this.changeSchema.bind(this)}
