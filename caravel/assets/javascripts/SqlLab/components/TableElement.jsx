@@ -1,7 +1,4 @@
 import React from 'react';
-import { connect } from 'react-redux';
-import { bindActionCreators } from 'redux';
-import * as Actions from '../actions';
 
 import { ButtonGroup, Well } from 'react-bootstrap';
 import shortid from 'shortid';
@@ -12,7 +9,6 @@ import ModalTrigger from '../../components/ModalTrigger';
 
 const propTypes = {
   table: React.PropTypes.object,
-  queryEditor: React.PropTypes.object,
   actions: React.PropTypes.object,
 };
 
@@ -21,7 +17,13 @@ const defaultProps = {
   actions: {},
 };
 
-class TableElement extends React.Component {
+class TableElement extends React.PureComponent {
+  constructor(props) {
+    super(props);
+    this.state = {
+      sortColumns: false,
+    };
+  }
 
   popSelectStar() {
     const qe = {
@@ -49,7 +51,7 @@ class TableElement extends React.Component {
   }
   dataPreviewModal() {
     const query = {
-      dbId: this.props.queryEditor.dbId,
+      dbId: this.props.table.dbId,
       sql: this.props.table.selectStar,
       tableName: this.props.table.name,
       sqlEditorId: null,
@@ -58,6 +60,9 @@ class TableElement extends React.Component {
       ctas: false,
     };
     this.props.actions.runQuery(query);
+  }
+  toggleSortColumns() {
+    this.setState({ sortColumns: !this.state.sortColumns });
   }
 
   render() {
@@ -106,18 +111,22 @@ class TableElement extends React.Component {
           <small className="m-l-5"><i className="fa fa-minus" /></small>
         </a>
       );
+      const cols = table.columns.slice();
+      if (this.state.sortColumns) {
+        cols.sort((a, b) => a.name.toUpperCase() > b.name.toUpperCase());
+      }
       metadata = (
         <div>
           {header}
           <div className="table-columns">
-            {table.columns.map((col) => {
+            {cols.map((col) => {
               let name = col.name;
               if (col.indexed) {
                 name = <strong>{col.name}</strong>;
               }
               return (
                 <div className="clearfix table-column" key={shortid.generate()}>
-                  <div className="pull-left m-l-10">
+                  <div className="pull-left m-l-10 col-name">
                     {name}
                   </div>
                   <div className="pull-right text-muted">
@@ -171,6 +180,17 @@ class TableElement extends React.Component {
             <ButtonGroup className="ws-el-controls pull-right">
               {keyLink}
               <Link
+                className={
+                  `fa fa-sort-${!this.state.sortColumns ? 'alpha' : 'numeric'}-asc ` +
+                  'pull-left sort-cols m-l-2'}
+                onClick={this.toggleSortColumns.bind(this)}
+                tooltip={
+                  !this.state.sortColumns ?
+                  'Sort columns alphabetically' :
+                  'Original table column order'}
+                href="#"
+              />
+              <Link
                 className="fa fa-search-plus pull-left m-l-2"
                 onClick={this.dataPreviewModal.bind(this)}
                 tooltip="Data preview"
@@ -187,7 +207,7 @@ class TableElement extends React.Component {
               <Link
                 className="fa fa-trash pull-left m-l-2"
                 onClick={this.removeTable.bind(this)}
-                tooltip="Remove from workspace"
+                tooltip="Remove from panel"
                 href="#"
               />
             </ButtonGroup>
@@ -203,10 +223,4 @@ class TableElement extends React.Component {
 TableElement.propTypes = propTypes;
 TableElement.defaultProps = defaultProps;
 
-function mapDispatchToProps(dispatch) {
-  return {
-    actions: bindActionCreators(Actions, dispatch),
-  };
-}
-export default connect(null, mapDispatchToProps)(TableElement);
-export { TableElement };
+export default TableElement;

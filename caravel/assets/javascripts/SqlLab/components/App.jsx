@@ -10,7 +10,7 @@ import DataPreviewModal from './DataPreviewModal';
 import { bindActionCreators } from 'redux';
 import { connect } from 'react-redux';
 
-class App extends React.Component {
+class App extends React.PureComponent {
   constructor(props) {
     super(props);
     this.state = {
@@ -38,16 +38,17 @@ class App extends React.Component {
           </div>
         </div>
       );
+    } else {
+      content = (
+        <div>
+          <QueryAutoRefresh />
+          <TabbedSqlEditors />
+        </div>
+      );
     }
-    content = (
-      <div>
-        <QueryAutoRefresh />
-        <TabbedSqlEditors />
-      </div>
-    );
     return (
       <div className="App SqlLab">
-        <Alerts alerts={this.props.alerts} />
+        <Alerts alerts={this.props.alerts} actions={this.props.actions} />
         <DataPreviewModal />
         <div className="container-fluid">
           {content}
@@ -59,6 +60,7 @@ class App extends React.Component {
 
 App.propTypes = {
   alerts: React.PropTypes.array,
+  actions: React.PropTypes.object,
 };
 
 function mapStateToProps(state) {
@@ -72,4 +74,5 @@ function mapDispatchToProps(dispatch) {
   };
 }
 
+export { App };
 export default connect(mapStateToProps, mapDispatchToProps)(App);
