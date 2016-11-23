@@ -13,13 +13,15 @@
       <link rel="icon" type="image/png" href="/static/assets/images/favicon.png">
     {% endblock %}
     {% block head_js %}
-      <script src="/static/assets/javascripts/dist/css-theme.entry.js"></script>
+      {% with filename="css-theme" %}
+        {% include "caravel/partials/_script_tag.html" %}
+      {% endwith %}
     {% endblock %}
   </head>
 
   <body>
     {% block navbar %}
-      {% if not viz or viz.request.args.get("standalone") != "true" %}
+      {% if not standalone_mode %}
         <header class="top" role="header">
           {% include 'appbuilder/navbar.html' %}
         </header>
@@ -29,7 +31,7 @@
     {% block body %}
       {% include 'caravel/flash_wrapper.html' %}
       <div id="app">
-        Oops! React.js is not working properly.
+        <img src="/static/assets/images/loading.gif" style="width: 50px; margin: 10px;">
       </div>
     {% endblock %}
 

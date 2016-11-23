@@ -13,10 +13,10 @@ from flask_appbuilder import SQLA, AppBuilder, IndexView
 from flask_appbuilder.baseviews import expose
 from flask_cache import Cache
 from flask_migrate import Migrate
+from caravel.source_registry import SourceRegistry
+from werkzeug.contrib.fixers import ProxyFix
+from caravel import utils
 
-from caravel import version
-
-VERSION = version.VERSION_STRING
 
 APP_DIR = os.path.dirname(__file__)
 CONFIG_MODULE = os.environ.get('CARAVEL_CONFIG', 'caravel.config')
@@ -24,11 +24,14 @@ CONFIG_MODULE = os.environ.get('CARAVEL_CONFIG', 'caravel.config')
 app = Flask(__name__)
 app.config.from_object(CONFIG_MODULE)
 if not app.debug:
-  # In production mode, add log handler to sys.stderr.
-  app.logger.addHandler(logging.StreamHandler())
-  app.logger.setLevel(logging.INFO)
+    # In production mode, add log handler to sys.stderr.
+    app.logger.addHandler(logging.StreamHandler())
+    app.logger.setLevel(logging.INFO)
 
 db = SQLA(app)
+
+
+utils.pessimistic_connection_handling(db.engine.pool)
 
 cache = Cache(app, config=app.config.get('CACHE_CONFIG'))
 
@@ -50,6 +53,15 @@ if app.config.get('ENABLE_CORS'):
     from flask_cors import CORS
     CORS(app, **app.config.get('CORS_OPTIONS'))
 
+if app.config.get('ENABLE_PROXY_FIX'):
+    app.wsgi_app = ProxyFix(app.wsgi_app)
+
+if app.config.get('UPLOAD_FOLDER'):
+    try:
+        os.makedirs(app.config.get('UPLOAD_FOLDER'))
+    except OSError:
+        pass
+
 
 class MyIndexView(IndexView):
     @expose('/')
@@ -65,4 +77,11 @@ appbuilder = AppBuilder(
 sm = appbuilder.sm
 
 get_session = appbuilder.get_session
-from caravel import config, views  # noqa
+results_backend = app.config.get("RESULTS_BACKEND")
+
+# Registering sources
+module_datasource_map = app.config.get("DEFAULT_MODULE_DS_MAP")
+module_datasource_map.update(app.config.get("ADDITIONAL_MODULE_DS_MAP"))
+SourceRegistry.register_sources(module_datasource_map)
+
+from caravel import views, config  # noqa

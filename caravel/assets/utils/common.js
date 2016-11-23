@@ -1,3 +1,5 @@
+/* eslint global-require: 0 */
+import $ from 'jquery';
 const d3 = window.d3 || require('d3');
 
 export const EARTH_CIRCUMFERENCE_KM = 40075.16;
@@ -23,5 +25,52 @@ export function isNumeric(num) {
 
 export function rgbLuminance(r, g, b) {
   // Formula: https://en.wikipedia.org/wiki/Relative_luminance
-  return LUMINANCE_RED_WEIGHT*r + LUMINANCE_GREEN_WEIGHT*g + LUMINANCE_BLUE_WEIGHT*b;
+  return (LUMINANCE_RED_WEIGHT * r) + (LUMINANCE_GREEN_WEIGHT * g) + (LUMINANCE_BLUE_WEIGHT * b);
+}
+
+export function getParamFromQuery(query, param) {
+  const vars = query.split('&');
+  for (let i = 0; i < vars.length; i++) {
+    const pair = vars[i].split('=');
+    if (decodeURIComponent(pair[0]) === param) {
+      return decodeURIComponent(pair[1]);
+    }
+  }
+  return null;
+}
+
+export function getLink(baseUrl, params) {
+  return baseUrl + '?' + params.join('&');
+}
+
+export function getParamsFromUrl() {
+  const hash = window.location.search;
+  const params = hash.split('?')[1].split('&');
+  const newParams = {};
+  params.forEach((p) => {
+    const value = p.split('=')[1].replace(/\+/g, ' ');
+    const key = p.split('=')[0];
+    newParams[key] = value;
+  });
+  return newParams;
+}
+
+export function getShortUrl(longUrl, callBack) {
+  $.ajax({
+    type: 'POST',
+    url: '/r/shortner/',
+    data: {
+      data: '/' + longUrl,
+    },
+    success: (data) => {
+      callBack(data);
+    },
+    error: (error) => {
+      /* eslint no-console: 0 */
+      if (console && console.warn) {
+        console.warn('Something went wrong...');
+        console.warn(error);
+      }
+    },
+  });
 }

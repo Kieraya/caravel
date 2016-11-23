@@ -1,8 +1,9 @@
+codeclimate-test-reporter
 coveralls
 mock
 mysqlclient
 nose
 psycopg2
 sphinx
-sphinx_bootstrap_theme
+sphinx-rtd-theme
 sphinxcontrib.youtube

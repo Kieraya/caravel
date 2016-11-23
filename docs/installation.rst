@@ -4,8 +4,8 @@ Installation & Configuration
 Getting Started
 ---------------
 
-Caravel is currently only tested using Python 2.7.*. Python 3 support is
-on the roadmap, Python 2.6 won't be supported.
+Caravel is tested using Python 2.7 and Python 3.4+. Python 3 is the recommended version,
+Python 2.6 won't be supported.
 
 
 OS dependencies
@@ -24,13 +24,13 @@ Here's how to install them:
 For **Debian** and **Ubuntu**, the following command will ensure that
 the required dependencies are installed: ::
 
-    sudo apt-get install build-essential libssl-dev libffi-dev python-dev python-pip
+    sudo apt-get install build-essential libssl-dev libffi-dev python-dev python-pip libsasl2-dev libldap2-dev
 
 For **Fedora** and **RHEL-derivatives**, the following command will ensure
 that the required dependencies are installed: ::
 
     sudo yum upgrade python-setuptools
-    sudo yum install gcc libffi-devel python-devel python-pip python-wheel openssl-devel
+    sudo yum install gcc libffi-devel python-devel python-pip python-wheel openssl-devel libsasl2-devel openldap-devel
 
 **OSX**, system python is not recommended. brew's python also ships with pip  ::
 
@@ -40,14 +40,38 @@ that the required dependencies are installed: ::
 **Windows** isn't officially supported at this point, but if you want to
 attempt it, download `get-pip.py <https://bootstrap.pypa.io/get-pip.py>`_, and run ``python get-pip.py`` which may need admin access. Then run the following: ::
 
-    C:\> \path\to\vcvarsall.bat x86_amd64
-    C:\> set LIB=C:\OpenSSL-1.0.1f-64bit\lib;%LIB%
-    C:\> set INCLUDE=C:\OpenSSL-1.0.1f-64bit\include;%INCLUDE%
     C:\> pip install cryptography
 
     # You may also have to create C:\Temp
     C:\> md C:\Temp
 
+Python virtualenv
+-----------------
+It is recommended to install Caravel inside a virtualenv. Python 3 already ships virtualenv, for
+Python 2 you need to install it. If it's packaged for your operating systems install it from there
+otherwise you can install from pip: ::
+
+    pip install virtualenv
+
+You can create and activate a virtualenv by: ::
+
+    # virtualenv is shipped in Python 3 as pyvenv
+    virtualenv venv
+    . ./venv/bin/activate
+
+On windows the syntax for activating it is a bit different: ::
+
+    venv\Scripts\activate
+
+Once you activated your virtualenv everything you are doing is confined inside the virtualenv.
+To exit a virtualenv just type ``deactivate``.
+
+Python's setup tools and pip
+----------------------------
+Put all the chances on your side by getting the very latest ``pip``
+and ``setuptools`` libraries.::
+
+    pip install --upgrade setuptools pip
 
 Caravel installation and initialization
 ---------------------------------------
@@ -62,11 +86,11 @@ Follow these few simple steps to install Caravel.::
     # Initialize the database
     caravel db upgrade
 
-    # Create default roles and permissions
-    caravel init
-
     # Load some data to play with
     caravel load_examples
+
+    # Create default roles and permissions
+    caravel init
 
     # Start the web server on port 8088
     caravel runserver -p 8088
@@ -82,6 +106,11 @@ the credential you entered while creating the admin account, and navigate to
 your datasources for Caravel to be aware of, and they should show up in
 `Menu -> Datasources`, from where you can start playing with your data!
 
+Please note that *gunicorn*, Caravel default application server, does not
+work on Windows so you need to use the development web server.
+The development web server though is not intended to be used on production systems
+so better use a supported platform that can run *gunicorn*.
+
 Configuration behind a load balancer
 ------------------------------------
 
@@ -90,6 +119,10 @@ or ELB on AWS), you may need to utilise a healthcheck endpoint so that your
 load balancer knows if your caravel instance is running. This is provided
 at ``/health`` which will return a 200 response containing "OK" if the
 webserver is running.
+
+If the load balancer is inserting X-Forwarded-For/X-Forwarded-Proto headers, you
+should set `ENABLE_PROXY_FIX = True` in the caravel config file to extract and use
+the headers.
 
 
 Configuration
@@ -103,7 +136,7 @@ of the parameters you can copy / paste in that configuration module: ::
     # Caravel specific config
     #---------------------------------------------------------
     ROW_LIMIT = 5000
-    CARAVEL_WORKERS = 16
+    CARAVEL_WORKERS = 4
 
     CARAVEL_WEBSERVER_PORT = 8088
     #---------------------------------------------------------
@@ -119,16 +152,24 @@ of the parameters you can copy / paste in that configuration module: ::
     # caravel metadata (slices, connections, tables, dashboards, ...).
     # Note that the connection information to connect to the datasources
     # you want to explore are managed directly in the web UI
-    SQLALCHEMY_DATABASE_URI = 'sqlite:////tmp/caravel.db'
+    SQLALCHEMY_DATABASE_URI = 'sqlite:////path/to/caravel.db'
 
     # Flask-WTF flag for CSRF
     CSRF_ENABLED = True
+
+    # Set this API key to enable Mapbox visualizations
+    MAPBOX_API_KEY = ''
 
 This file also allows you to define configuration parameters used by
 Flask App Builder, the web framework used by Caravel. Please consult
 the `Flask App Builder Documentation
 <http://flask-appbuilder.readthedocs.org/en/latest/config.html>`_
 for more information on how to configure Caravel.
+
+Please make sure to change:
+
+* *SQLALCHEMY_DATABASE_URI*, by default it is stored at *~/.caravel/caravel.db*
+* *SECRET_KEY*, to a long random string
 
 Database dependencies
 ---------------------
@@ -160,6 +201,8 @@ Here's a list of some of the recommended packages.
 +---------------+-------------------------------------+-------------------------------------------------+
 |  Impala       | ``pip install impyla``              | ``impala://``                                   |
 +---------------+-------------------------------------+-------------------------------------------------+
+|  SparkSQL     | ``pip install pyhive``              | ``jdbc+hive://``                                |
++---------------+-------------------------------------+-------------------------------------------------+
 
 Note that many other database are supported, the main criteria being the
 existence of a functional SqlAlchemy dialect and Python driver. Googling
@@ -175,8 +218,11 @@ caching purpose. Configuring your caching backend is as easy as providing
 a ``CACHE_CONFIG``, constant in your ``caravel_config.py`` that
 complies with the Flask-Cache specifications.
 
-Flask-Cache supports multiple caching backends (Redis, Memcache,
-SimpleCache (in-memory), or the local filesystem).
+Flask-Cache supports multiple caching backends (Redis, Memcached,
+SimpleCache (in-memory), or the local filesystem). If you are going to use
+Memcached please use the pylibmc client library as python-memcached does
+not handle storing binary data correctly. If you use Redis, please install
+[python-redis](https://pypi.python.org/pypi/redis).
 
 For setting your timeouts, this is done in the Caravel metadata and goes
 up the "timeout searchpath", from your slice configuration, to your
@@ -263,3 +309,44 @@ Upgrading should be as straightforward as running::
 
     pip install caravel --upgrade
     caravel db upgrade
+    caravel init
+
+SQL Lab
+-------
+SQL Lab is a powerful SQL IDE that works with all SQLAlchemy compatible
+databases out there. By default, queries are run in a web request, and
+may eventually timeout as queries exceed the maximum duration of a web
+request in your environment, whether it'd be a reverse proxy or the Caravel
+server itself.
+
+In the modern analytics world, it's not uncommon to run large queries that
+run for minutes or hours.
+To enable support for long running queries that
+execute beyond the typical web request's timeout (30-60 seconds), it is
+necessary to deploy an asynchronous backend, which consist of one or many
+Caravel worker, which is implemented as a Celery worker, and a Celery
+broker for which we recommend using Redis or RabbitMQ.
+
+It's also preferable to setup an async result backend as a key value store
+that can hold the long-running query results for a period of time. More
+details to come as to how to set this up here soon.
+
+SQL Lab supports templating in queries, and it's possible to override
+the default Jinja context in your environment by defining the
+``JINJA_CONTEXT_ADDONS`` in your caravel configuration. Objects referenced
+in this dictionary are made available for users to use in their SQL.
+
+
+Making your own build
+---------------------
+
+For more advanced users, you may want to build Caravel from sources. That
+would be the case if you fork the project to add features specific to
+your environment.::
+
+    # assuming $CARAVEL_HOME as the root of the repo
+    cd $CARAVEL_HOME/caravel/assets
+    npm install
+    npm run prod
+    cd $CARAVEL_HOME
+    python setup.py install

@@ -9,7 +9,7 @@ You can contribute in many ways:
 
 ### Report Bugs
 
-Report bugs through Github
+Report bugs through GitHub
 
 If you are reporting a bug, please include:
 
@@ -37,7 +37,7 @@ articles.
 
 ### Submit Feedback
 
-The best way to send feedback is to file an issue on Github.
+The best way to send feedback is to file an issue on GitHub.
 
 If you are proposing a feature:
 
@@ -49,13 +49,13 @@ If you are proposing a feature:
 
 ## Latest Documentation
 
-[API Documentation](http://pythonhosted.com/caravel)
+Latest documentation and tutorial are available [here](http://airbnb.io/caravel)
 
 ## Setting up a Python development environment
 
 Check the [OS dependencies](http://airbnb.io/caravel/installation.html#os-dependencies) before follows these steps.
 
-    # fork the repo on github and then clone it
+    # fork the repo on GitHub and then clone it
     # alternatively you may want to clone the main repo but that won't work
     # so well if you are planning on sending PRs
     # git clone git@github.com:airbnb/caravel.git
@@ -90,6 +90,8 @@ Flask-Appbuilder itself comes bundled with jQuery and bootstrap.
 While these may be phased out over time, these packages are currently not
 managed with npm.
 
+### Node/npm versions
+Make sure you are using recent versions of node and npm. No problems have been found with node>=5.10 and npm>=3.9.
 
 ### Using npm to generate bundled files
 
@@ -139,17 +141,50 @@ npm run dev
 
 ## Testing
 
-Tests can then be run with:
+Python tests can be run with:
 
     ./run_tests.sh
+
+We use [Mocha](https://mochajs.org/), [Chai](http://chaijs.com/) and [Enzyme](http://airbnb.io/enzyme/) to test Javascript. Tests can be run with:
+
+    cd /caravel/caravel/assets/javascripts
+    npm i
+    npm run test
+
+## Linting
 
 Lint the project with:
 
     # for python changes
     flake8 changes tests
+    flake8 changes caravel
 
     # for javascript
     npm run lint
+
+## Linting with codeclimate
+Codeclimate is a service we use to measure code quality and test coverage. To get codeclimate's report on your branch, ideally before sending your PR, you can setup codeclimate against your Caravel fork. After you push to your fork, you should be able to get the report at http://codeclimate.com . Alternatively, if you prefer to work locally, you can install the codeclimate cli tool.
+
+*Install the codeclimate cli tool*
+```
+curl -L https://github.com/docker/machine/releases/download/v0.7.0/docker-machine-`uname -s`-`uname -m` > /usr/local/bin/docker-machine && chmod +x /usr/local/bin/docker-machine 
+brew install docker
+docker-machine create --driver virtual box default
+docker-machine env default
+eval "$(docker-machine env default)"
+docker pull codeclimate/codeclimate
+brew tap codeclimate/formulae
+brew install codeclimate
+```
+
+*Run the lint command:*
+```
+docker-machine start
+eval "$(docker-machine env default)”
+codeclimate analyze
+```
+More info can be found here: https://docs.codeclimate.com/docs/open-source-free
+
 
 ## API documentation
 
@@ -188,7 +223,7 @@ meets these guidelines:
 
 We use [Babel](http://babel.pocoo.org/en/latest/) to translate Caravel. The
 key is to instrument the strings that need translation using
-`from flask.ext.babelpkg import lazy_gettext as _`. Once this is imported in
+`from flask_babel import lazy_gettext as _`. Once this is imported in
 a module, all you have to do is to `_("Wrap your strings")` using the
 underscore `_` "function".
 
@@ -208,7 +243,7 @@ new language dictionary, run the following command:
 
     pybabel init -i ./babel/messages.pot -d caravel/translations -l es
 
-Then it's a matter of running the statement bellow to gather all stings that
+Then it's a matter of running the statement below to gather all stings that
 need translation
 
     fabmanager babel-extract --target caravel/translations/
@@ -218,3 +253,20 @@ You can then translate the strings gathered in files located under
 to take effect, they need to be compiled using this command:
 
     fabmanager babel-compile --target caravel/translations/
+
+
+## Adding new datasources
+
+1. Create Models and Views for the datasource, add them under caravel folder, like a new my_models.py
+    with models for cluster, datasources, columns and metrics and my_views.py with clustermodelview
+    and datasourcemodelview.
+
+2. Create db migration files for the new models
+
+3. Specify this variable to add the datasource model and from which module it is from in config.py:
+
+    For example:
+
+    `ADDITIONAL_MODULE_DS_MAP = {'caravel.my_models': ['MyDatasource', 'MyOtherDatasource']}`
+
+    This means it'll register MyDatasource and MyOtherDatasource in caravel.my_models module in the source registry.

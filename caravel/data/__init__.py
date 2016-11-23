@@ -14,6 +14,7 @@ import random
 import pandas as pd
 from sqlalchemy import String, DateTime, Date, Float, BigInteger
 
+import caravel
 from caravel import app, db, models, utils
 
 # Shortcuts
@@ -26,17 +27,7 @@ config = app.config
 
 DATA_FOLDER = os.path.join(config.get("BASE_DIR"), 'data')
 
-
-def get_or_create_db(session):
-    print("Creating database reference")
-    dbobj = session.query(DB).filter_by(database_name='main').first()
-    if not dbobj:
-        dbobj = DB(database_name="main")
-    print(config.get("SQLALCHEMY_DATABASE_URI"))
-    dbobj.sqlalchemy_uri = config.get("SQLALCHEMY_DATABASE_URI")
-    session.add(dbobj)
-    session.commit()
-    return dbobj
+misc_dash_slices = []  # slices assembled in a "Misc Chart" dashboard
 
 
 def merge_slice(slc):
@@ -76,103 +67,104 @@ def load_energy():
         tbl = TBL(table_name=tbl_name)
     tbl.description = "Energy consumption"
     tbl.is_featured = True
-    tbl.database = get_or_create_db(db.session)
+    tbl.database = utils.get_or_create_main_db(caravel)
     db.session.merge(tbl)
     db.session.commit()
     tbl.fetch_metadata()
 
-    merge_slice(
-        Slice(
-            slice_name="Energy Sankey",
-            viz_type='sankey',
-            datasource_type='table',
-            table=tbl,
-            params=textwrap.dedent("""\
-            {
-                "collapsed_fieldsets": "",
-                "datasource_id": "3",
-                "datasource_name": "energy_usage",
-                "datasource_type": "table",
-                "flt_col_0": "source",
-                "flt_eq_0": "",
-                "flt_op_0": "in",
-                "groupby": [
-                    "source",
-                    "target"
-                ],
-                "having": "",
-                "metric": "sum__value",
-                "row_limit": "5000",
-                "slice_id": "",
-                "slice_name": "Energy Sankey",
-                "viz_type": "sankey",
-                "where": ""
-            }
-            """))
+    slc = Slice(
+        slice_name="Energy Sankey",
+        viz_type='sankey',
+        datasource_type='table',
+        datasource_id=tbl.id,
+        params=textwrap.dedent("""\
+        {
+            "collapsed_fieldsets": "",
+            "datasource_id": "3",
+            "datasource_name": "energy_usage",
+            "datasource_type": "table",
+            "flt_col_0": "source",
+            "flt_eq_0": "",
+            "flt_op_0": "in",
+            "groupby": [
+                "source",
+                "target"
+            ],
+            "having": "",
+            "metric": "sum__value",
+            "row_limit": "5000",
+            "slice_name": "Energy Sankey",
+            "viz_type": "sankey",
+            "where": ""
+        }
+        """)
     )
+    misc_dash_slices.append(slc.slice_name)
+    merge_slice(slc)
 
-    merge_slice(
-        Slice(
-            slice_name="Energy Force Layout",
-            viz_type='directed_force',
-            datasource_type='table',
-            table=tbl,
-            params=textwrap.dedent("""\
-            {
-                "charge": "-500",
-                "collapsed_fieldsets": "",
-                "datasource_id": "1",
-                "datasource_name": "energy_usage",
-                "datasource_type": "table",
-                "flt_col_0": "source",
-                "flt_eq_0": "",
-                "flt_op_0": "in",
-                "groupby": [
-                    "source",
-                    "target"
-                ],
-                "having": "",
-                "link_length": "200",
-                "metric": "sum__value",
-                "row_limit": "5000",
-                "slice_id": "229",
-                "slice_name": "Force",
-                "viz_type": "directed_force",
-                "where": ""
-            }
-            """))
+    slc = Slice(
+        slice_name="Energy Force Layout",
+        viz_type='directed_force',
+        datasource_type='table',
+        datasource_id=tbl.id,
+        params=textwrap.dedent("""\
+        {
+            "charge": "-500",
+            "collapsed_fieldsets": "",
+            "datasource_id": "1",
+            "datasource_name": "energy_usage",
+            "datasource_type": "table",
+            "flt_col_0": "source",
+            "flt_eq_0": "",
+            "flt_op_0": "in",
+            "groupby": [
+                "source",
+                "target"
+            ],
+            "having": "",
+            "link_length": "200",
+            "metric": "sum__value",
+            "row_limit": "5000",
+            "slice_name": "Force",
+            "viz_type": "directed_force",
+            "where": ""
+        }
+        """)
     )
-    merge_slice(
-        Slice(
-            slice_name="Heatmap",
-            viz_type='heatmap',
-            datasource_type='table',
-            table=tbl,
-            params=textwrap.dedent("""\
-            {
-                "all_columns_x": "source",
-                "all_columns_y": "target",
-                "canvas_image_rendering": "pixelated",
-                "collapsed_fieldsets": "",
-                "datasource_id": "1",
-                "datasource_name": "energy_usage",
-                "datasource_type": "table",
-                "flt_col_0": "source",
-                "flt_eq_0": "",
-                "flt_op_0": "in",
-                "having": "",
-                "linear_color_scheme": "blue_white_yellow",
-                "metric": "sum__value",
-                "normalize_across": "heatmap",
-                "slice_id": "229",
-                "slice_name": "Heatmap",
-                "viz_type": "heatmap",
-                "where": "",
-                "xscale_interval": "1",
-                "yscale_interval": "1"
-            }
-            """))
+    misc_dash_slices.append(slc.slice_name)
+    merge_slice(slc)
+
+    slc = Slice(
+        slice_name="Heatmap",
+        viz_type='heatmap',
+        datasource_type='table',
+        datasource_id=tbl.id,
+        params=textwrap.dedent("""\
+        {
+            "all_columns_x": "source",
+            "all_columns_y": "target",
+            "canvas_image_rendering": "pixelated",
+            "collapsed_fieldsets": "",
+            "datasource_id": "1",
+            "datasource_name": "energy_usage",
+            "datasource_type": "table",
+            "flt_col_0": "source",
+            "flt_eq_0": "",
+            "flt_op_0": "in",
+            "having": "",
+            "linear_color_scheme": "blue_white_yellow",
+            "metric": "sum__value",
+            "normalize_across": "heatmap",
+            "slice_name": "Heatmap",
+            "viz_type": "heatmap",
+            "where": "",
+            "xscale_interval": "1",
+            "yscale_interval": "1"
+        }
+        """)
     )
+    misc_dash_slices.append(slc.slice_name)
+    merge_slice(slc)
 
 
 def load_world_bank_health_n_pop():
@@ -186,7 +178,7 @@ def load_world_bank_health_n_pop():
         tbl_name,
         db.engine,
         if_exists='replace',
-        chunksize=500,
+        chunksize=50,
         dtype={
             'year': DateTime(),
             'country_code': String(3),
@@ -202,7 +194,7 @@ def load_world_bank_health_n_pop():
     tbl.description = utils.readfile(os.path.join(DATA_FOLDER, 'countries.md'))
     tbl.main_dttm_col = 'year'
     tbl.is_featured = True
-    tbl.database = get_or_create_db(db.session)
+    tbl.database = utils.get_or_create_main_db(caravel)
     db.session.merge(tbl)
     db.session.commit()
     tbl.fetch_metadata()
@@ -220,7 +212,7 @@ def load_world_bank_health_n_pop():
         "metrics": ["sum__SP_POP_TOTL"],
         "row_limit": config.get("ROW_LIMIT"),
         "since": "2014-01-01",
-        "until": "2014-01-01",
+        "until": "2014-01-02",
         "where": "",
         "markup_type": "markdown",
         "country_fieldtype": "cca3",
@@ -235,7 +227,7 @@ def load_world_bank_health_n_pop():
             slice_name="Region Filter",
             viz_type='filter_box',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type='filter_box',
@@ -244,7 +236,7 @@ def load_world_bank_health_n_pop():
             slice_name="World's Population",
             viz_type='big_number',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 since='2000',
@@ -256,7 +248,7 @@ def load_world_bank_health_n_pop():
             slice_name="Most Populated Countries",
             viz_type='table',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type='table',
@@ -266,7 +258,7 @@ def load_world_bank_health_n_pop():
             slice_name="Growth Rate",
             viz_type='line',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type='line',
@@ -278,22 +270,22 @@ def load_world_bank_health_n_pop():
             slice_name="% Rural",
             viz_type='world_map',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type='world_map',
                 metric="sum__SP_RUR_TOTL_ZS",
                 num_period_compare="10")),
         Slice(
-            slice_name="Life Expexctancy VS Rural %",
+            slice_name="Life Expectancy VS Rural %",
             viz_type='bubble',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type='bubble',
                 since="2011-01-01",
-                until="2011-01-01",
+                until="2011-01-02",
                 series="region",
                 limit="0",
                 entity="country_name",
@@ -309,7 +301,7 @@ def load_world_bank_health_n_pop():
             slice_name="Rural Breakdown",
             viz_type='sunburst',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type='sunburst',
@@ -321,7 +313,7 @@ def load_world_bank_health_n_pop():
             slice_name="World's Pop Growth",
             viz_type='area',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 since="1960-01-01",
@@ -332,19 +324,19 @@ def load_world_bank_health_n_pop():
             slice_name="Box plot",
             viz_type='box_plot',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 since="1960-01-01",
                 until="now",
-                whisker_options="Tukey",
+                whisker_options="Min/max (no outliers)",
                 viz_type='box_plot',
                 groupby=["region"],)),
         Slice(
             slice_name="Treemap",
             viz_type='treemap',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 since="1960-01-01",
@@ -356,7 +348,7 @@ def load_world_bank_health_n_pop():
             slice_name="Parallel Coordinates",
             viz_type='para',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 since="2011-01-01",
@@ -368,8 +360,9 @@ def load_world_bank_health_n_pop():
                     'sum__SP_RUR_TOTL_ZS',
                     'sum__SH_DYN_AIDS'],
                 secondary_metric='sum__SP_POP_TOTL',
-                series=["country_name"],)),
+                series="country_name",)),
     ]
+    misc_dash_slices.append(slices[-1].slice_name)
     for slc in slices:
         merge_slice(slc)
 
@@ -593,7 +586,7 @@ def load_birth_names():
     if not obj:
         obj = TBL(table_name='birth_names')
     obj.main_dttm_col = 'ds'
-    obj.database = get_or_create_db(db.session)
+    obj.database = utils.get_or_create_main_db(caravel)
     obj.is_featured = True
     db.session.merge(obj)
     db.session.commit()
@@ -626,7 +619,7 @@ def load_birth_names():
             slice_name="Girls",
             viz_type='table',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 groupby=['name'],
@@ -636,7 +629,7 @@ def load_birth_names():
             slice_name="Boys",
             viz_type='table',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 groupby=['name'],
@@ -647,7 +640,7 @@ def load_birth_names():
             slice_name="Participants",
             viz_type='big_number',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="big_number", granularity="ds",
@@ -656,7 +649,7 @@ def load_birth_names():
             slice_name="Genders",
             viz_type='pie',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="pie", groupby=['gender'])),
@@ -664,7 +657,7 @@ def load_birth_names():
             slice_name="Genders by State",
             viz_type='dist_bar',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 flt_eq_1="other", viz_type="dist_bar",
@@ -674,7 +667,7 @@ def load_birth_names():
             slice_name="Trends",
             viz_type='line',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="line", groupby=['name'],
@@ -683,7 +676,7 @@ def load_birth_names():
             slice_name="Title",
             viz_type='markup',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="markup", markup_type="html",
@@ -694,14 +687,14 @@ def load_birth_names():
         The source dataset came from
         <a href="https://github.com/hadley/babynames">[here]</a>
     </p>
-    <img src="http://monblog.system-linux.net/image/tux/baby-tux_overlord59-tux.png">
+    <img src="/static/assets/images/babytux.jpg">
 </div>
 """)),
         Slice(
             slice_name="Name Cloud",
             viz_type='word_cloud',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="word_cloud", size_from="10",
@@ -711,7 +704,7 @@ def load_birth_names():
             slice_name="Pivot Table",
             viz_type='pivot_table',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="pivot_table", metrics=['sum__num'],
@@ -720,7 +713,7 @@ def load_birth_names():
             slice_name="Number of Girls",
             viz_type='big_number_total',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(
                 defaults,
                 viz_type="big_number_total", granularity="ds",
@@ -841,7 +834,7 @@ def load_unicode_test_data():
     if not obj:
         obj = TBL(table_name='unicode_test')
     obj.main_dttm_col = 'date'
-    obj.database = get_or_create_db(db.session)
+    obj.database = utils.get_or_create_main_db(caravel)
     obj.is_featured = False
     db.session.merge(obj)
     db.session.commit()
@@ -873,7 +866,7 @@ def load_unicode_test_data():
         slice_name="Unicode Cloud",
         viz_type='word_cloud',
         datasource_type='table',
-        table=tbl,
+        datasource_id=tbl.id,
         params=get_slice_json(slice_data),
     )
     merge_slice(slc)
@@ -920,7 +913,7 @@ def load_random_time_series_data():
     if not obj:
         obj = TBL(table_name='random_time_series')
     obj.main_dttm_col = 'ds'
-    obj.database = get_or_create_db(db.session)
+    obj.database = utils.get_or_create_main_db(caravel)
     obj.is_featured = False
     db.session.merge(obj)
     db.session.commit()
@@ -946,7 +939,7 @@ def load_random_time_series_data():
         slice_name="Calendar Heatmap",
         viz_type='cal_heatmap',
         datasource_type='table',
-        table=tbl,
+        datasource_id=tbl.id,
         params=get_slice_json(slice_data),
     )
     merge_slice(slc)
@@ -988,7 +981,7 @@ def load_long_lat_data():
     if not obj:
         obj = TBL(table_name='long_lat')
     obj.main_dttm_col = 'date'
-    obj.database = get_or_create_db(db.session)
+    obj.database = utils.get_or_create_main_db(caravel)
     obj.is_featured = False
     db.session.merge(obj)
     db.session.commit()
@@ -1016,9 +1009,10 @@ def load_long_lat_data():
         slice_name="Mapbox Long/Lat",
         viz_type='mapbox',
         datasource_type='table',
-        table=tbl,
+        datasource_id=tbl.id,
         params=get_slice_json(slice_data),
     )
+    misc_dash_slices.append(slc.slice_name)
     merge_slice(slc)
 
 
@@ -1052,7 +1046,7 @@ def load_multiformat_time_series_data():
     if not obj:
         obj = TBL(table_name='multiformat_time_series')
     obj.main_dttm_col = 'ds'
-    obj.database = get_or_create_db(db.session)
+    obj.database = utils.get_or_create_main_db(caravel)
     obj.is_featured = False
     dttm_and_expr_dict = {
         'ds': [None, None],
@@ -1064,19 +1058,18 @@ def load_multiformat_time_series_data():
         'string0': ['%Y-%m-%d %H:%M:%S.%f', None],
         'string3': ['%Y/%m/%d%H:%M:%S.%f', None],
     }
-    for col in obj.table_columns:
-        print(col.column_name)
+    for col in obj.columns:
         dttm_and_expr = dttm_and_expr_dict[col.column_name]
         col.python_date_format = dttm_and_expr[0]
         col.dbatabase_expr = dttm_and_expr[1]
+        col.is_dttm = True
     db.session.merge(obj)
     db.session.commit()
     obj.fetch_metadata()
     tbl = obj
 
     print("Creating some slices")
-    i = 0
-    for col in tbl.table_columns:
+    for i, col in enumerate(tbl.columns):
         slice_data = {
             "granularity_sqla": col.column_name,
             "datasource_id": "8",
@@ -1093,11 +1086,85 @@ def load_multiformat_time_series_data():
         }
 
         slc = Slice(
-            slice_name="Calendar Heatmap multiformat" + str(i),
+            slice_name="Calendar Heatmap multiformat " + str(i),
             viz_type='cal_heatmap',
             datasource_type='table',
-            table=tbl,
+            datasource_id=tbl.id,
             params=get_slice_json(slice_data),
         )
-        i += 1
         merge_slice(slc)
+    misc_dash_slices.append(slc.slice_name)
+
+
+def load_misc_dashboard():
+    """Loading a dasbhoard featuring misc charts"""
+
+    print("Creating the dashboard")
+    db.session.expunge_all()
+    DASH_SLUG = "misc_charts"
+    dash = db.session.query(Dash).filter_by(slug=DASH_SLUG).first()
+
+    if not dash:
+        dash = Dash()
+    js = textwrap.dedent("""\
+    [
+        {
+            "col": 1,
+            "row": 7,
+            "size_x": 6,
+            "size_y": 4,
+            "slice_id": "442"
+        },
+        {
+            "col": 1,
+            "row": 2,
+            "size_x": 6,
+            "size_y": 5,
+            "slice_id": "443"
+        },
+        {
+            "col": 7,
+            "row": 2,
+            "size_x": 6,
+            "size_y": 4,
+            "slice_id": "444"
+        },
+        {
+            "col": 9,
+            "row": 0,
+            "size_x": 4,
+            "size_y": 2,
+            "slice_id": "455"
+        },
+        {
+            "col": 7,
+            "row": 6,
+            "size_x": 6,
+            "size_y": 5,
+            "slice_id": "467"
+        },
+        {
+            "col": 1,
+            "row": 0,
+            "size_x": 8,
+            "size_y": 2,
+            "slice_id": "475"
+        }
+    ]
+    """)
+    l = json.loads(js)
+    slices = (
+        db.session
+        .query(Slice)
+        .filter(Slice.slice_name.in_(misc_dash_slices))
+        .all()
+    )
+    slices = sorted(slices, key=lambda x: x.id)
+    for i, pos in enumerate(l):
+        pos['slice_id'] = str(slices[i].id)
+    dash.dashboard_title = "Misc Charts"
+    dash.position_json = json.dumps(l, indent=4)
+    dash.slug = DASH_SLUG
+    dash.slices = slices
+    db.session.merge(dash)
+    db.session.commit()

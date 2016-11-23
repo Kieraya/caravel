@@ -27,6 +27,9 @@ TIMESTAMP_CHOICES = [
      '"%Y-%m-%d %H:%M:%S" | 2019-01-14 01:32:10'),
     ("%H:%M:%S", '"%H:%M:%S" | 01:32:10'),
 ]
+D3_FORMAT_DOCS = _(
+    "D3 format syntax "
+    "https://github.com/d3/d3-format")
 
 
 class BetterBooleanField(BooleanField):
@@ -235,10 +238,22 @@ class FormFactory(object):
                 "default": False,
                 "description": ""
             }),
+            'show_markers': (BetterBooleanField, {
+                "label": _("Show Markers"),
+                "default": False,
+                "description": (
+                    "Show data points as circle markers on top of the lines "
+                    "in the chart")
+            }),
+            'show_bar_value': (BetterBooleanField, {
+                "label": _("Bar Values"),
+                "default": False,
+                "description": "Show the value on top of the bars or not"
+            }),
             'show_controls': (BetterBooleanField, {
                 "label": _("Extra Controls"),
                 "default": False,
-                "description": (
+                "description": _(
                     "Whether to show extra controls or not. Extra controls "
                     "include things like making mulitBar charts stacked "
                     "or side by side.")
@@ -295,15 +310,17 @@ class FormFactory(object):
             'all_columns_x': (SelectField, {
                 "label": _("X"),
                 "choices": self.choicify(datasource.column_names),
+                "default": datasource.column_names[0],
                 "description": _("Columns to display")
             }),
             'all_columns_y': (SelectField, {
                 "label": _("Y"),
                 "choices": self.choicify(datasource.column_names),
+                "default": datasource.column_names[0],
                 "description": _("Columns to display")
             }),
             'druid_time_origin': (FreeFormSelectField, {
-                "label": _( "Origin"),
+                "label": _("Origin"),
                 "choices": (
                     ('', _('default')),
                     ('now', _('now')),
@@ -315,8 +332,8 @@ class FormFactory(object):
             }),
             'bottom_margin': (FreeFormSelectField, {
                 "label": _("Bottom Margin"),
-                "choices": self.choicify([50, 75, 100, 125, 150, 200]),
-                "default": 50,
+                "choices": self.choicify(['auto', 50, 75, 100, 125, 150, 200]),
+                "default": 'auto',
                 "description": _(
                     "Bottom marging, in pixels, allowing for more room for "
                     "axis labels"),
@@ -407,7 +424,7 @@ class FormFactory(object):
                     "The time column for the visualization. Note that you "
                     "can define arbitrary expression that return a DATETIME "
                     "column in the table editor. Also note that the "
-                    "filter bellow is applied against this column or "
+                    "filter below is applied against this column or "
                     "expression")
             }),
             'resample_rule': (FreeFormSelectField, {
@@ -513,9 +530,7 @@ class FormFactory(object):
                     ('+,', '"+," | +12,345.4321'),
                     ('$,.2f', '"$,.2f" | $12,345.43'),
                 ],
-                "description": _("D3 format syntax for numbers "
-                            "https: //github.com/mbostock/\n"
-                            "d3/wiki/Formatting")
+                "description": D3_FORMAT_DOCS,
             }),
             'row_limit': (FreeFormSelectField, {
                 "label": _('Row limit'),
@@ -529,6 +544,12 @@ class FormFactory(object):
                 "default": 50,
                 "description": _(
                     "Limits the number of time series that get displayed")
+            }),
+            'timeseries_limit_metric': (SelectField, {
+                "label": _("Sort By"),
+                "choices": [('', '')] + datasource.metrics_combo,
+                "default": "",
+                "description": _("Metric used to define the top series")
             }),
             'rolling_type': (SelectField, {
                 "label": _("Rolling"),
@@ -551,7 +572,7 @@ class FormFactory(object):
                 "default": default_groupby,
                 "description": _(
                     "Defines the grouping of entities. "
-                    "Each serie is shown as a specific color on the chart and "
+                    "Each series is shown as a specific color on the chart and "
                     "has a legend toggle")
             }),
             'entity': (SelectField, {
@@ -637,9 +658,7 @@ class FormFactory(object):
                 "label": _("X axis format"),
                 "default": 'smart_date',
                 "choices": TIMESTAMP_CHOICES,
-                "description": _("D3 format syntax for y axis "
-                            "https: //github.com/mbostock/\n"
-                            "d3/wiki/Formatting")
+                "description": D3_FORMAT_DOCS,
             }),
             'y_axis_format': (FreeFormSelectField, {
                 "label": _("Y axis format"),
@@ -652,9 +671,7 @@ class FormFactory(object):
                     ('+,', '"+," | +12,345.4321'),
                     ('$,.2f', '"$,.2f" | $12,345.43'),
                 ],
-                "description": _("D3 format syntax for y axis "
-                            "https: //github.com/mbostock/\n"
-                            "d3/wiki/Formatting")
+                "description": D3_FORMAT_DOCS,
             }),
             'markup_type': (SelectField, {
                 "label": _("Markup Type"),
@@ -687,6 +704,16 @@ class FormFactory(object):
                 ),
                 "default": 'linear',
                 "description": _("Line interpolation as defined by d3.js")
+            }),
+            'pie_label_type': (SelectField, {
+                "label": _("Label Type"),
+                "default": 'key',
+                "choices": (
+                    ('key', _("Category Name")),
+                    ('value', _("Value")),
+                    ('percent', _("Percentage")),
+                ),
+                "description": _("What should be shown on the label?")
             }),
             'code': (TextAreaField, {
                 "label": _("Code"),
@@ -724,6 +751,11 @@ class FormFactory(object):
                 "default": False,
                 "description": _(
                     "Whether to display the time range interactive selector")
+            }),
+            'date_filter': (BetterBooleanField, {
+                "label": _("Date Filter"),
+                "default": False,
+                "description": _("Whether to include a time filter")
             }),
             'show_datatable': (BetterBooleanField, {
                 "label": _("Data Table"),
@@ -782,6 +814,11 @@ class FormFactory(object):
                 "default": False,
                 "description": _("Do you want a donut or a pie?")
             }),
+            'labels_outside': (BetterBooleanField, {
+                "label": _("Put labels outside"),
+                "default": True,
+                "description": _("Put the labels outside the pie?")
+            }),
             'contribution': (BetterBooleanField, {
                 "label": _("Contribution"),
                 "default": False,
@@ -794,6 +831,18 @@ class FormFactory(object):
                 "description": _(
                     "[integer] Number of period to compare against, "
                     "this is relative to the granularity selected")
+            }),
+            'period_ratio_type': (SelectField, {
+                "label": _("Period Ratio Type"),
+                "default": 'growth',
+                "choices": (
+                    ('factor', _('factor')),
+                    ('growth', _('growth')),
+                    ('value', _('value')),
+                ),
+                "description": _(
+                    "`factor` means (new/previous), `growth` is "
+                    "((new/previous) - 1), `value` is (new-previous)")
             }),
             'time_compare': (TextField, {
                 "label": _("Time Shift"),
@@ -829,6 +878,7 @@ class FormFactory(object):
                     ("mapbox://styles/mapbox/satellite-v9", "Satellite"),
                     ("mapbox://styles/mapbox/outdoors-v9", "Outdoors"),
                 ],
+                "default": "mapbox://styles/mapbox/streets-v9",
                 "description": _("Base layer map style")
             }),
             'clustering_radius': (FreeFormSelectField, {
@@ -935,7 +985,7 @@ class FormFactory(object):
         viz = self.viz
         field_css_classes = {}
         for name, obj in self.field_dict.items():
-            field_css_classes[name] = ['form-control']
+            field_css_classes[name] = ['form-control', 'input-sm']
             s = self.fieltype_class.get(obj.field_class)
             if s:
                 field_css_classes[name] += [s]
@@ -1009,12 +1059,14 @@ class FormFactory(object):
             field_css_classes['granularity'] = ['form-control', 'select2_freeform']
             field_css_classes['druid_time_origin'] = ['form-control', 'select2_freeform']
             filter_choices = self.choicify(['in', 'not in', 'regex'])
-            having_op_choices = self.choicify(['>', '<', '=='])
+            having_op_choices = self.choicify(
+                ['==', '!=', '>', '<', '>=', '<='])
             filter_prefixes += ['having']
         add_to_form(('since', 'until'))
 
+        # filter_cols defaults to ''. Filters with blank col will be ignored
         filter_cols = self.choicify(
-            viz.datasource.filterable_column_names or [''])
+            ([''] + viz.datasource.filterable_column_names) or [''])
         having_cols = filter_cols + viz.datasource.metrics_combo
         for field_prefix in filter_prefixes:
             is_having_filter = field_prefix == 'having'
