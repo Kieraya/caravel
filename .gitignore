@@ -1,22 +1,24 @@
 *.pyc
-caravel/assets/coverage/*
+yarn-error.log
+_modules
+superset/assets/coverage/*
 changelog.sh
 .DS_Store
 .coverage
 _build
 _static
 _images
-caravel/bin/caravelc
+_modules
+superset/bin/supersetc
 env_py3
 .eggs
 build
 *.db
 tmp
-caravel_config.py
+superset_config.py
 local_config.py
 env
-
-caravel.egg-info/
+superset.egg-info/
 app.db
 *.bak
 
@@ -26,3 +28,4 @@ app.db
 caravel/assets/node_modules/*
 !caravel/assets/node_modules/font-awesome/
 npm-debug.log
+yarn.lock
